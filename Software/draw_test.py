@@ -16,6 +16,10 @@ MAX_US_A = 1018.75
 MAX_ANGLE_RAD_A = 3.0 * pi / 4.0 
 B_OFFSET_US = -39.0
 
+PEN_UP_US = 1310.0
+PEN_DOWN_US = 1500.0
+PEN_UPDOWN_CHAN = 2
+COUNTS_PER_US = 4
 MIN_ANGLE_RAD_B = MIN_ANGLE_RAD_A
 MAX_ANGLE_RAD_B = MAX_ANGLE_RAD_A
 MIN_US_B = MIN_US_A + B_OFFSET_US
@@ -67,80 +71,6 @@ def find_highest_y(candidates):
     
     return candidates[idx]
         
-def drawbot_fk(pa, pb, ra, rb, la, lb, ext_co, ext_orth, theta1, theta2):
-    # ext_co: extension coincident with la
-    # ext_orth: extension orthogogonal to tip of ext_co    
-    lp = sqrt((la + ext_co) ** 2.0 + ext_orth ** 2.0)
-    alpha = atan2(ext_orth, (la + ext_co))
-    pax, pay = pa
-    pbx, pby = pb
-
-    # Point at angle theta1 on periphery of circle A    
-    cirax = pax + (ra * cos(theta1))
-    ciray = pay + (ra * sin(theta1))
-    
-    # Point at angle theta2 on periphery of circle B
-    cirbx = pbx + (rb * cos(theta2))
-    cirby = pby + (rb * sin(theta2))
-    
-    # Find intersection of cirles of linkage la and lb
-    c_candidates = get_intersection_2circ((cirax, ciray), la, (cirbx, cirby), lb)
-    cx,cy = find_highest_y(c_candidates)
-    
-    # Find angles from linkages ra/rb tips to linkage la/lb tips
-    phi1 = atan2((cy - ciray), (cx - cirax))
-    phi2 = atan2((cy - cirby), (cx - cirbx))
-
-    # Find offset pen position
-    phi_p = phi1 + alpha
-    
-    # Find pen position
-    px = cirax + (lp * cos(phi_p))
-    py = ciray + (lp * sin(phi_p))    
-    
-    return (px, py, phi1, phi2, cx, cy)
-    """
-    for pair in pairs:
-        px, py, phi1, phi2, cx, cy = drawbot_fk((-65.0, 0.0), (65.0, 0.0), 40.0, 40.0, 95.0, 95.0, 18.0, 9.5, pair[1], pair[0])
-        x.append(px)
-        y.append(py)
-    """
-
-def drawbot_ik(pa, pb, ra, rb, la, lb, ext_co, ext_orth, pe):
-    # pe: Point of end effector (x, y) for which to find the theta1/theta2
-
-    # ext_co: extension coincident with la
-    # ext_orth: extension orthogogonal to tip of ext_co    
-    lp = sqrt((la + ext_co) ** 2.0 + ext_orth ** 2.0)
-    alpha = atan2(ext_orth, (la + ext_co))
-    pax, pay = pa
-    pbx, pby = pb
-    pex, pey = pe
-
-    # Find intersection between circle centered at `pe` of radius `lp`
-    # and circle A. Keep highest y
-    cira_candidates = get_intersection_2circ((pax, pay), ra, (pex, pey), lp)
-    cirax,ciray = find_highest_y(cira_candidates)
-    
-    # Find linkage la/lb intersection point C from edge of circle a, 
-    # on linkage la, offset alpha from the lp linkage angle
-    lp_angle = atan2((pey - ciray), (pex - cirax))
-    c_angle = lp_angle - alpha
-    cx = cirax + (la * cos(c_angle))
-    cy = ciray + (la * sin(c_angle))
-    
-    # Find two intersecting points from circle centered at la/lb intersection 
-    # point C of radius lb, to circle B. Keep highest y
-    cirb_candidates = get_intersection_2circ((cx, cy), lb, (pbx, pby), rb)
-    cirbx,cirby = find_highest_y(cirb_candidates)
-    
-    # From points on cira/cirb on circle A/B, find linkage la/lb angles
-    # theta1/theta2
-    theta1 = atan2((ciray - pay), (cirax - pax))    
-    theta2 = atan2((cirby - pby), (cirbx - pbx))
-    
-    return (theta1, theta2, cx, cy)
-
 # Cal A 135=3*pi/4.0=1018.75us
 #     120=1151.75
 #     90=pi/2=1481.75
@@ -318,77 +248,192 @@ def get_leon_points(ox, oy):
     
     return pairs
 
-def main():
-    pa = (-65.0, 0.0)
-    pb = (65.0, 0.0)
-    ra = 40.0
-    rb = 40.0
-    la = 95.0
-    lb = 95.0
-    ext_co = 18.0
-    ext_orth = 9.5
+def pen_up(maestro):
+    maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_UP_US * COUNTS_PER_US))
+    time.sleep(0.3)
     
-    seg_len = 0.2
-    segment_points = []
-    leon_points = get_leon_points(5.0, 100.0)
+def pen_down(maestro):
+    maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_DOWN_US * COUNTS_PER_US))
+    time.sleep(0.3)
 
-    segment_points.extend(leon_points)
-    
-    #segment_points.extend(split_line_into_segments(p1, p2, seg_len))
-    #segment_points.extend(split_line_into_segments(p2, p3, seg_len))
-    #segment_points.extend(split_line_into_segments(p3, p1, seg_len))    
-    
-    fx = []
-    fy = []
-    ftheta1 = []
-    ftheta2 = []
-    ipairs = []
-    
-    for x, y in segment_points:
-        # Find ik
-        pe = (x, y)
-        theta1, theta2, cx, cy = drawbot_ik(pa, pb, ra, rb, la, lb, ext_co, ext_orth, pe)
-        ftheta1.append(theta1)
-        ftheta2.append(theta2)
+def distance(p1, p2):
+    return sqrt((p2[0] - p1[0]) ** 2.0 + (p2[1] - p1[1]) ** 2.0)
 
-        # Get fk        
-        pex, pey, phi1, phi2, cx, cy = drawbot_fk(pa, pb, ra, rb, la, lb, ext_co, ext_orth, theta1, theta2)
+class CheapDrawBotKinematics(object):
+    def __init__(self):
+        self.pa = (-65.0, 0.0)
+        self.pb = (65.0, 0.0)
+        self.ra = 40.0
+        self.rb = 40.0
+        self.la = 95.0
+        self.lb = 95.0
+        # ext_co: extension coincident with la
+        # ext_orth: extension orthogogonal to tip of ext_co
+        self.ext_co = 18.0
+        self.ext_orth = 9.5
+
+    def forward_kine(self, theta1, theta2):
+        lp = sqrt((self.la + self.ext_co) ** 2.0 + self.ext_orth ** 2.0)
+        alpha = atan2(self.ext_orth, (self.la + self.ext_co))
+        pax, pay = self.pa
+        pbx, pby = self.pb
+    
+        # Point at angle theta1 on periphery of circle A    
+        cirax = pax + (self.ra * cos(theta1))
+        ciray = pay + (self.ra * sin(theta1))
         
-        fx.append(pex)
-        fy.append(pey)    
-
-    maestro = pololu_maestro.PololuMaestro("COM6")
-    maestro.connect()
-
-    #for theta1, theta2 in [(3.0*pi/4.0, 3.0*pi/4.0), (pi/2.0, pi/2.0), (pi/4.0, pi/4.0)]:
-    #   counts1 = angle_to_count(theta1, 500, 0, 2400, math.pi)
-    #   counts2 = angle_to_count(theta2, 500, 0, 2400, math.pi)
-    #
-    #   maestro.set_target(0, counts1)
-    #   maestro.set_target(1, counts2)
-    #   
-    #   time.sleep(5)
-   
-   
-    not_moved = True
-    for x, y in segment_points:
-        # Find ik
-        pe = (x, y)
-        theta1, theta2, cx, cy = drawbot_ik(pa, pb, ra, rb, la, lb, ext_co, ext_orth, pe)
+        # Point at angle theta2 on periphery of circle B
+        cirbx = pbx + (self.rb * cos(theta2))
+        cirby = pby + (self.rb * sin(theta2))
+        
+        # Find intersection of cirles of linkage la and lb
+        c_candidates = get_intersection_2circ((cirax, ciray), self.la, (cirbx, cirby), self.lb)
+        cx,cy = find_highest_y(c_candidates)
+        
+        # Find angles from linkages ra/rb tips to linkage la/lb tips
+        phi1 = atan2((cy - ciray), (cx - cirax))
+        phi2 = atan2((cy - cirby), (cx - cirbx))
     
-        counts1 = angle_to_count(theta1, MIN_US_A, MIN_ANGLE_RAD_A, MAX_US_A, MAX_ANGLE_RAD_A)
-        counts2 = angle_to_count(theta2, MIN_US_B, MIN_ANGLE_RAD_B, MAX_US_B, MAX_ANGLE_RAD_B)
+        # Find offset pen position
+        phi_p = phi1 + alpha
+        
+        # Find pen position
+        px = cirax + (lp * cos(phi_p))
+        py = ciray + (lp * sin(phi_p))    
+        
+        return (px, py, phi1, phi2, cx, cy)
+    
+    def inverse_kine(self, pe):
+        # pe: Point of end effector (x, y) for which to find the theta1/theta2
+    
+        # ext_co: extension coincident with la
+        # ext_orth: extension orthogogonal to tip of ext_co    
+        lp = sqrt((self.la + self.ext_co) ** 2.0 + self.ext_orth ** 2.0)
+        alpha = atan2(self.ext_orth, (self.la + self.ext_co))
+        pax, pay = self.pa
+        pbx, pby = self.pb
+        pex, pey = pe
+    
+        # Find intersection between circle centered at `pe` of radius `lp`
+        # and circle A. Keep highest y
+        cira_candidates = get_intersection_2circ((pax, pay), self.ra, (pex, pey), lp)
+        cirax,ciray = find_highest_y(cira_candidates)
+        
+        # Find linkage la/lb intersection point C from edge of circle a, 
+        # on linkage la, offset alpha from the lp linkage angle
+        lp_angle = atan2((pey - ciray), (pex - cirax))
+        c_angle = lp_angle - alpha
+        cx = cirax + (self.la * cos(c_angle))
+        cy = ciray + (self.la * sin(c_angle))
+        
+        # Find two intersecting points from circle centered at la/lb intersection 
+        # point C of radius lb, to circle B. Keep highest y
+        cirb_candidates = get_intersection_2circ((cx, cy), self.lb, (pbx, pby), self.rb)
+        cirbx,cirby = find_highest_y(cirb_candidates)
+        
+        # From points on cira/cirb on circle A/B, find linkage la/lb angles
+        # theta1/theta2
+        theta1 = atan2((ciray - pay), (cirax - pax))    
+        theta2 = atan2((cirby - pby), (cirbx - pbx))
+        
+        return (theta1, theta2, cx, cy)
+    
+    def gen_path(self, points, seg_len=0.2):
+        segment_points = []
+        prev_px, prev_py = points[0]    
+        for px, py in points:
+            # Split segments that are longer than maximum segment length into smaller chunks
+            if distance((prev_px, prev_py), (px, py)) > seg_len:
+                segment_points.extend(split_line_into_segments((prev_px, prev_py), (px, py), seg_len))
+            else:
+                segment_points.append((px, py))
+                
+            prev_px, prev_py = (px, py)
 
-        maestro.set_target(0, counts1)
-        maestro.set_target(1, counts2)
-   
-        if not_moved:
-            time.sleep(2.0)
-            not_moved = False
-        else:
-            time.sleep(0.02)
+        all_angles = []    
+        for x, y in segment_points:
+            # Find ik
+            pe = (x, y)
+            theta1, theta2, cx, cy = self.inverse_kine(pe)
+            all_angles.append((theta1, theta2))
+                
+        return segment_points, all_angles
 
-    maestro.close()
+    def get_feasible_thetas(self, min_angle=pi/16.0, max_angle=15.0*pi/16.0, resolution=0.05):
+        feas_thetas = []
+        feas_points = []
+        for theta1 in arange(max_angle, min_angle, -resolution):
+            for theta2 in arange(min_angle, max_angle, resolution):
+                try:
+                    pex, pey, phi1, phi2, cx, cy = self.forward_kine(theta1, theta2)
+                    feas_thetas.append((theta1, theta2))
+                    feas_points.append((pex, pey))
+                except IndexError:
+                    # No solution founds
+                    pass
+
+        return feas_points, feas_thetas
+
+def gen_leon_path():
+    leon_points = get_leon_points(5.0, 100.0)
+    return gen_path(leon_points)
+
+def draw_path(thetas, maestro_com_port, delay=0.005):
+    maestro = pololu_maestro.PololuMaestro(maestro_com_port)
+    maestro.connect()
+    try:
+        pen_up(maestro)
+        
+        not_moved = True
+        for theta1, theta2 in thetas:
+            counts1 = angle_to_count(theta1, MIN_US_A, MIN_ANGLE_RAD_A, MAX_US_A, MAX_ANGLE_RAD_A)
+            counts2 = angle_to_count(theta2, MIN_US_B, MIN_ANGLE_RAD_B, MAX_US_B, MAX_ANGLE_RAD_B)
+    
+            maestro.set_target(0, counts1)
+            maestro.set_target(1, counts2)
+       
+            if not_moved:
+                time.sleep(1.0)
+                pen_down(maestro)
+                not_moved = False
+            else:
+                time.sleep(delay)
+                
+    finally:
+        maestro.close()    
+    
+def main():
+    cheap_draw_bot = CheapDrawBotKinematics()    
+
+    for i in range(4):
+        leon_points = get_leon_points(5.0, 100.0)
+        points, thetas = cheap_draw_bot.gen_path(leon_points)
+        draw_path(thetas, "COM6")    
+    
+    if False:
+        feas_points, feas_thetas = cheap_draw_bot.get_feasible_thetas()
+        draw_path(feas_thetas, "COM6", delay=0.1)
+    
+    if False:    
+        fx = []
+        fy = []
+        ftheta1 = []
+        ftheta2 = []
+        ipairs = []
+        
+        for x, y in segment_points:
+            # Find ik
+            pe = (x, y)
+            theta1, theta2, cx, cy = drawbot_ik(pa, pb, ra, rb, la, lb, ext_co, ext_orth, pe)
+            ftheta1.append(theta1)
+            ftheta2.append(theta2)
+    
+            # Get fk        
+            pex, pey, phi1, phi2, cx, cy = drawbot_fk(pa, pb, ra, rb, la, lb, ext_co, ext_orth, theta1, theta2)
+            
+            fx.append(pex)
+            fy.append(pey)    
+
     
     if False:
         f = figure()
