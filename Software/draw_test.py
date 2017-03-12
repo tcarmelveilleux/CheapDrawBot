@@ -3,12 +3,18 @@ __author__ = 'Tennessee'
 import pololu_maestro
 import time
 import math
-import draw_solver
+#import draw_solver
 from pylab import *
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 import random
 from math import atan2, floor
+from chiplotle.tools.serialtools.virtual_serial_port import VirtualSerialPort
+from chiplotle.plotters.plotter import Plotter
+from chiplotle.geometry.core.coordinate import Coordinate
+from chiplotle.geometry.core.coordinatearray import CoordinateArray
+from chiplotle.tools.io import view, import_hpgl_file, save_hpgl, export
+from chiplotle.hpgl.commands import PD, PU
 
 MIN_US_A = 1952.25
 MIN_ANGLE_RAD_A = pi/4.0
@@ -352,18 +358,26 @@ class CheapDrawBotKinematics(object):
 
         all_angles = []    
         for x, y in segment_points:
-            # Find ik
-            pe = (x, y)
-            theta1, theta2, cx, cy = self.inverse_kine(pe)
-            all_angles.append((theta1, theta2))
+            try:
+                # Find ik
+                pe = (x, y)
+                theta1, theta2, cx, cy = self.inverse_kine(pe)
+                all_angles.append((theta1, theta2))
+            except:
+                pass
                 
         return segment_points, all_angles
 
-    def get_feasible_thetas(self, min_angle=pi/16.0, max_angle=15.0*pi/16.0, resolution=0.05):
+    def local_coord_from_hgpl(self, p):
+        return ((p[0] * 25e-3) + self.pa[0], (p[1] * 25e-3) + self.pa[1])
+
+    def get_feasible_area(self, min_angle=pi/16.0, max_angle=15.0*pi/16.0, ang_resolution=0.05, xy_resolution=0.5, **kwargs):
         feas_thetas = []
         feas_points = []
-        for theta1 in arange(max_angle, min_angle, -resolution):
-            for theta2 in arange(min_angle, max_angle, resolution):
+
+        # Coarse angle scan to find extreme X/Y for finer X/Y scan
+        for theta1 in arange(max_angle, min_angle, -ang_resolution):
+            for theta2 in arange(min_angle, max_angle, ang_resolution):
                 try:
                     pex, pey, phi1, phi2, cx, cy = self.forward_kine(theta1, theta2)
                     feas_thetas.append((theta1, theta2))
@@ -371,6 +385,64 @@ class CheapDrawBotKinematics(object):
                 except IndexError:
                     # No solution founds
                     pass
+
+        min_x = 1e6
+        max_x = -1e6
+        min_y = 1e6
+        max_y = -1e6
+
+        for x, y in feas_points:
+            if x < min_x:
+                min_x = x
+            elif x > max_x:
+                max_x = x
+
+            if y < min_y:
+                min_y = y
+            elif y > max_y:
+                max_y = y
+
+        feas_thetas = []
+        feas_points = []
+
+        for pey in arange(min_y, max_y, xy_resolution):
+            for pex in arange(min_x, max_x, xy_resolution):
+                try:
+                    theta1, theta2, cx, cy = self.inverse_kine((pex, pey))
+                    feas_thetas.append((theta1, theta2))
+                    feas_points.append((pex, pey))
+                except IndexError:
+                    # No solution founds
+                    pass
+
+        # Save HPGL of feasible area
+        if kwargs.get("save_hpgl") is not None:
+            def local_mm_to_hpgl(x, y):
+                return (int(x / 25e-3), int(y / 25e-3))
+
+            hpgl_coords = CoordinateArray()
+            plotter = Plotter(VirtualSerialPort(left_bottom=local_mm_to_hpgl(0,0), right_top=local_mm_to_hpgl(2.0 * self.pb[0], 1.25 * max_y)))
+            for pex,pey in feas_points:
+                hpgl_coords.append(Coordinate(*local_mm_to_hpgl(pex - self.pa[0], pey)))
+
+            plotter.pen_down(hpgl_coords)
+            filename = kwargs.get("save_hpgl")
+            save_hpgl(plotter, filename)
+
+        if kwargs.get("plot", False):
+            f = plt.figure()
+            plt.subplot(121)
+            plt.plot([x for x,y in feas_points], [y for x,y in feas_points], 'r-')
+            plt.axis('equal')
+            plt.axis([-65, 65, 0, 150])
+            plt.title("Feasible X/Y space")
+
+            plt.subplot(122)
+            plt.plot([t1 for t1, t2 in feas_thetas], [t2 for t1, t2 in feas_thetas], 'b.')
+            plt.axis('equal')
+            plt.title("Feasible theta space")
+
+            plt.show()
 
         return feas_points, feas_thetas
 
@@ -400,19 +472,65 @@ def draw_path(thetas, maestro_com_port, delay=0.005):
                 time.sleep(delay)
                 
     finally:
-        maestro.close()    
-    
-def main():
-    cheap_draw_bot = CheapDrawBotKinematics()    
+        maestro.close()
 
-    for i in range(4):
-        leon_points = get_leon_points(5.0, 100.0)
-        points, thetas = cheap_draw_bot.gen_path(leon_points)
-        draw_path(thetas, "COM6")    
+def draw_hpgl(filename, maestro_com_port, delay=0.02, seg_len=0.1):
+    cheap_draw_bot = CheapDrawBotKinematics()
+
+    hpgl_data = import_hpgl_file(filename)
+
+    prev_x = 0
+    prev_y = 0
+    pen_is_up = False
+
+    maestro = pololu_maestro.PololuMaestro(maestro_com_port)
+    maestro.connect()
+    try:
+        accumulated_path = []
+        for command in hpgl_data:
+            if isinstance(command, PU):
+                pex, pey = cheap_draw_bot.local_coord_from_hgpl((command.x[0], command.y[0]))
+                accumulated_path = [(pex, pey)]
+                pen_up(maestro)
+                pen_is_up = True
+            elif isinstance(command, PD):
+                # Pen down here
+                for coord in command.xy:
+                    pex, pey = cheap_draw_bot.local_coord_from_hgpl((coord.x, coord.y))
+                    accumulated_path.append((pex, pey))
+
+                points, thetas = cheap_draw_bot.gen_path(accumulated_path, seg_len)
+
+                for theta1, theta2 in thetas:
+                    counts1 = angle_to_count(theta1, MIN_US_A, MIN_ANGLE_RAD_A, MAX_US_A, MAX_ANGLE_RAD_A)
+                    counts2 = angle_to_count(theta2, MIN_US_B, MIN_ANGLE_RAD_B, MAX_US_B, MAX_ANGLE_RAD_B)
+
+                    maestro.set_target(0, counts1)
+                    maestro.set_target(1, counts2)
+
+                    if pen_is_up:
+                        time.sleep(1.0)
+                        pen_down(maestro)
+                        pen_is_up = False
+                    else:
+                        time.sleep(delay)
+    finally:
+        maestro.close()
+
+
+def main():
+
+    draw_hpgl("Funstuff.hpgl", "COM27")
+
+    if False:
+        for i in range(4):
+            leon_points = get_leon_points(5.0, 100.0)
+            points, thetas = cheap_draw_bot.gen_path(leon_points)
+            draw_path(thetas, "COM6")
     
     if False:
-        feas_points, feas_thetas = cheap_draw_bot.get_feasible_thetas()
-        draw_path(feas_thetas, "COM6", delay=0.1)
+        feas_points, feas_thetas = cheap_draw_bot.get_feasible_area(save_hpgl="feasible.plt", plot=True)
+        #draw_path(feas_thetas, "COM6", delay=0.1)
     
     if False:    
         fx = []
