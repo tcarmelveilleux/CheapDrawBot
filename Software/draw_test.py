@@ -278,6 +278,30 @@ class CheapDrawBotKinematics(object):
         self.ext_co = 18.0
         self.ext_orth = 9.5
 
+        # When la/lb doing "the splits" at the bottom, how far from the very bottom do we allow
+        self.min_y_dist_from_bottom_line = 5.0
+
+        # Min/max angles achievable by servos (referenced to pa/pa)
+        self.min_theta = pi / 16.0
+        self.max_theta = 15.0 * pi / 16.0
+
+    def respects_external_constraints(self, pex, pey, theta1, theta2):
+        pax, pay = self.pa
+        pbx, pby = self.pb
+        if pey < (pay + self.ra + self.ext_orth + self.min_y_dist_from_bottom_line):
+            return False
+
+        if pey < (pby + self.rb + self.ext_orth + self.min_y_dist_from_bottom_line):
+            return False
+
+        if theta1 < self.min_theta or theta1 > self.max_theta:
+            return False
+
+        if theta2 < self.min_theta or theta1 > self.max_theta:
+            return False
+
+        return True
+
     def forward_kine(self, theta1, theta2):
         lp = sqrt((self.la + self.ext_co) ** 2.0 + self.ext_orth ** 2.0)
         alpha = atan2(self.ext_orth, (self.la + self.ext_co))
@@ -304,10 +328,13 @@ class CheapDrawBotKinematics(object):
         phi_p = phi1 + alpha
         
         # Find pen position
-        px = cirax + (lp * cos(phi_p))
-        py = ciray + (lp * sin(phi_p))    
-        
-        return (px, py, phi1, phi2, cx, cy)
+        pex = cirax + (lp * cos(phi_p))
+        pey = ciray + (lp * sin(phi_p))
+
+        if not self.respects_external_constraints(pex, pey, theta1, theta2):
+            raise ValueError("No solution found for forward kine")
+
+        return (pex, pey, phi1, phi2, cx, cy)
     
     def inverse_kine(self, pe):
         # pe: Point of end effector (x, y) for which to find the theta1/theta2
@@ -324,26 +351,29 @@ class CheapDrawBotKinematics(object):
         # and circle A. Keep highest y
         cira_candidates = get_intersection_2circ((pax, pay), self.ra, (pex, pey), lp)
         cirax,ciray = find_highest_y(cira_candidates)
-        
-        # Find linkage la/lb intersection point C from edge of circle a, 
+
+        # Find linkage la/lb intersection point C from edge of circle a,
         # on linkage la, offset alpha from the lp linkage angle
         lp_angle = atan2((pey - ciray), (pex - cirax))
         c_angle = lp_angle - alpha
         cx = cirax + (self.la * cos(c_angle))
         cy = ciray + (self.la * sin(c_angle))
-        
-        # Find two intersecting points from circle centered at la/lb intersection 
+
+        # Find two intersecting points from circle centered at la/lb intersection
         # point C of radius lb, to circle B. Keep highest y
         cirb_candidates = get_intersection_2circ((cx, cy), self.lb, (pbx, pby), self.rb)
-        cirbx,cirby = find_highest_y(cirb_candidates)
-        
+        cirbx, cirby = find_highest_y(cirb_candidates)
+
         # From points on cira/cirb on circle A/B, find linkage la/lb angles
         # theta1/theta2
-        theta1 = atan2((ciray - pay), (cirax - pax))    
+        theta1 = atan2((ciray - pay), (cirax - pax))
         theta2 = atan2((cirby - pby), (cirbx - pbx))
-        
-        return (theta1, theta2, cx, cy)
-    
+
+        if self.respects_external_constraints(pex, pey, theta1, theta2):
+            return (theta1, theta2, cx, cy)
+        else:
+            raise ValueError("No reverse kine solution found")
+
     def gen_path(self, points, seg_len=0.2):
         segment_points = []
         prev_px, prev_py = points[0]    
@@ -382,7 +412,7 @@ class CheapDrawBotKinematics(object):
                     pex, pey, phi1, phi2, cx, cy = self.forward_kine(theta1, theta2)
                     feas_thetas.append((theta1, theta2))
                     feas_points.append((pex, pey))
-                except IndexError:
+                except:
                     # No solution founds
                     pass
 
@@ -411,7 +441,7 @@ class CheapDrawBotKinematics(object):
                     theta1, theta2, cx, cy = self.inverse_kine((pex, pey))
                     feas_thetas.append((theta1, theta2))
                     feas_points.append((pex, pey))
-                except IndexError:
+                except:
                     # No solution founds
                     pass
 
@@ -517,22 +547,33 @@ def draw_hpgl(filename, maestro_com_port, delay=0.02, seg_len=0.1):
     finally:
         maestro.close()
 
-
-def main():
-
+def test_hpgl():
     draw_hpgl("Funstuff.hpgl", "COM27")
 
+def test_leon_path():
+    cheap_draw_bot = CheapDrawBotKinematics()
+    for i in range(4):
+        leon_points = get_leon_points(5.0, 100.0)
+        points, thetas = cheap_draw_bot.gen_path(leon_points)
+        draw_path(thetas, "COM6")
+
+def test_feasible_area():
+    cheap_draw_bot = CheapDrawBotKinematics()
+    feas_points, feas_thetas = cheap_draw_bot.get_feasible_area(save_hpgl="feasible.plt", plot=True)
+    # draw_path(feas_thetas, "COM6", delay=0.1)
+
+def draw_spiro():
+    # Center of circle: (pax + 79, pay + 92.1, radius 31
+    #
+    # TODO: https://en.wikipedia.org/wiki/Spirograph
+    pass
+
+def main():
+    #test_hpgl()
+    #test_leon_path()
+    test_feasible_area()
+
     if False:
-        for i in range(4):
-            leon_points = get_leon_points(5.0, 100.0)
-            points, thetas = cheap_draw_bot.gen_path(leon_points)
-            draw_path(thetas, "COM6")
-    
-    if False:
-        feas_points, feas_thetas = cheap_draw_bot.get_feasible_area(save_hpgl="feasible.plt", plot=True)
-        #draw_path(feas_thetas, "COM6", delay=0.1)
-    
-    if False:    
         fx = []
         fy = []
         ftheta1 = []
