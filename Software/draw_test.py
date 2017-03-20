@@ -191,6 +191,11 @@ def circle_empty(all_xy, center, radius):
     return True
 
 
+def sorted_by_manhattan_distance(all_xy, p, within):
+    candidates = [p2 for p2 in all_xy if (abs(p2[0] - p[0]) + abs(p2[1] - p[1])) <= within]
+    return sorted(candidates, key=lambda p2: (abs(p2[0] - p[0]) + abs(p2[1] - p[1])))
+
+
 def concave_hull_wheel(all_xy, wheel_radius):
     # Get centroid and bounding box of points
     cx, cy, width, height, min_x, max_y, min_y, max_y = centroid_extents(all_xy)
@@ -223,7 +228,8 @@ def concave_hull_wheel(all_xy, wheel_radius):
         min_circle_center = (0, 0)
         found = False
 
-        for idx, candidate in enumerate(all_xy):
+        candidates = sorted_by_manhattan_distance(all_xy, last_point, within=(4.0 * wheel_radius))
+        for idx, candidate in enumerate(candidates):
             # Skip last point (starting point of current circle)
             if candidate == last_point:
                 continue
@@ -243,7 +249,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
             empty_circle_center = None
             num_empty = 0
             for circle_center in cir_candidates:
-                if circle_empty(all_xy, circle_center, wheel_radius):
+                if circle_empty(candidates, circle_center, wheel_radius):
                     num_empty += 1
                     empty_circle_center = circle_center
 
@@ -279,7 +285,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
             raise ValueError("Computation diverged and no candidate was found. Should not happen!")
 
         # Got through all the points. New outline point is on concave hull
-        outline_point = all_xy[min_idx]
+        outline_point = candidates[min_idx]
         print("Found outline point (%.2f, %.2f)" % (outline_point[0], outline_point[1]))
         if outline_point in outline_points:
             # Got back to start, we're done!
@@ -793,7 +799,7 @@ def test_concave_hull():
     ]
 
     all_xy = feas_points
-    wheel_radius = xy_resolution
+    wheel_radius = xy_resolution * 5.0
     outline_points, circle_centers = concave_hull_wheel(all_xy, wheel_radius)
 
     f = plt.figure()
@@ -805,9 +811,9 @@ def test_concave_hull():
     plt.plot(all_x, all_y, "ro")
     plt.plot(out_x, out_y, "b-")
 
-    #for cir in circle_centers:
-    #    c = plt.Circle((cir[0], cir[1]), wheel_radius, fill=False, color='g')
-    #    ax.add_artist(c)
+    for cir in circle_centers:
+       c = plt.Circle((cir[0], cir[1]), wheel_radius, fill=False, color='g')
+       ax.add_artist(c)
     plt.axis('equal')
 
     plt.show()
