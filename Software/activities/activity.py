@@ -9,6 +9,7 @@ Created on: 2017-03-21
 
 Copyright 2017, Tennessee Carmel-Veilleux.
 """
+import logging
 import sys
 if sys.version_info[0] < 3:
     import Tkinter as Tk
@@ -68,26 +69,33 @@ class ActivityParam(object):
 
 
 class Activity(object):
-    def __init__(self, master, controller, *args, **kwargs):
-        self._master = master
-        self._controller = controller
+    def __init__(self, parent, drawbot, *args, **kwargs):
+        self._parent = parent
         self._param_frame = None
         self._params = {}
         self._param_ctrls = {}
+        self._drawbot = drawbot
+        self._drawbot_sequence = []
         self._name = "Unknown"
+        self._logger = logging.getLogger("activity.%s" % self.__class__.__name__)
 
     @property
     def name(self):
         return self._name
 
-    def get_params_panel(self):
-        return ttk.Frame(self._master)
-
-    def update_path(self, drawbot_sequence):
-        pass
+    def get_drawbot_sequence(self):
+        return self._drawbot_sequence
+        #pass
+        #self._controller.update_path(self._drawbot_sequence)
 
     def handle_event(self, event_dict):
-        pass
+        """
+        Handle an event coming from the controller or widgets/params
+
+        :param event_dict: Dict containing event data. Only mandatory key is event name: {"event": "event_name_here", ... }
+        :return: True if event was handled, false otherwise (good to determine if parent processed while in a child event handler)
+        """
+        return False
 
     def num_var_changed(self, num_var, str_var, param):
         # Track string value to slider
@@ -95,7 +103,7 @@ class Activity(object):
         param.value = value
         str_var.set(str(param))
         # TODO BETTER NOTIFY!
-        # self._event_handler({"event": "update"})
+        self.handle_event({"event": "param_changed", "param": param})
 
     def str_var_changed(self, num_var, param, str_value):
         # Track slider value to string
@@ -145,7 +153,7 @@ class Activity(object):
         param_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1, pady=5)
         return param_frame
 
-    def make_params_panel(self, master):
+    def make_activity_panel(self, master):
         """
         Generate frame containing all controls for activity. Default panel includes slider controls for
         all parameters.
@@ -158,3 +166,12 @@ class Activity(object):
             self._param_ctrls[name] = self._gen_param_ctrl(self._param_frame, param)
         self._param_frame.pack(side=Tk.TOP, fill=Tk.X)
         return self._param_frame
+
+    def update_geometry(self):
+        # Recompute the internal geometry on request from the controller.
+        raise NotImplementedError()
+
+    def get_preview(self):
+        # Return a tuple (drawing_paths, extents), where "drawing_paths" is a list of x,y points and "extents" is
+        # a list [xmin, xmax, ymin, ymax].
+        raise NotImplementedError()

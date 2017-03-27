@@ -12,6 +12,7 @@ Copyright 2017, Tennessee Carmel-Veilleux
 from __future__ import print_function
 import threading
 import matplotlib
+import logging
 matplotlib.use('TkAgg')
 
 import numpy as np
@@ -20,6 +21,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.backend_bases import key_press_handler
 import matplotlib.pyplot as plt
 from activities.spirograph import SpirographActivity
+from drivers.cheapdrawbot import build_cheap_drawbot
 
 from matplotlib.figure import Figure
 import sys
@@ -77,13 +79,22 @@ class RobotController(object):
 # the window is closed with the window manager.
 
 class RobotControlFrame(object):
-    def __init__(self, master, event_handler, activities, **kwargs):
+    def __init__(self, master, activities, **kwargs):
+        self._activity_updated = False
+        self._timer_interval_ms = 100
+        self._logger = logging.getLogger("RobotControlFrame")
+        self._activities = activities
+        self._current_activity = activities[0]
+
+        self._mode = "spirograph"
+        self._data_lock = threading.Lock()
+
+        #######################
         s = ttk.Style()
         s.configure('.', font=('Helvetica', 12))
 
         self._frame = ttk.Frame(master)
         self._frame.pack()
-        self._event_handler = event_handler
 
         self._title_label = ttk.Label(self._frame, text="Roboto")
         self._title_label.pack(side="top")
@@ -114,7 +125,7 @@ class RobotControlFrame(object):
         self._oper_notebook = ttk.Notebook(master=self._frame)
 
         for activity in activities:
-            activity_frame = activity.make_params_panel(master=self._oper_notebook)
+            activity_frame = activity.make_activity_panel(master=self._oper_notebook)
             self._oper_notebook.add(activity_frame, text=activity.name)
 
         # HPGL
@@ -127,8 +138,52 @@ class RobotControlFrame(object):
         self._oper_notebook.pack(side=Tk.TOP, fill=Tk.X)
 
         # Update button
-        self._update_button = Tk.Button(master=self._frame, text="Update", command=lambda: self._event_handler({"event": "update"}))
+        self._update_button = Tk.Button(master=self._frame, text="Update", command=lambda: self.handle_event({"event": "update"}))
         self._update_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH)
+
+        ##################
+
+        # Bootstrap timer update
+        self._frame.after(100, self.on_timer)
+
+    def handle_event(self, event_dict):
+        callback_name = "on_%s" % event_dict["event"]
+        if hasattr(self, callback_name) and callable(getattr(self, callback_name)):
+            getattr(self, callback_name)(event_dict)
+        else:
+            self._logger.warn("Could not process event: %s", event_dict)
+
+    def on_activity_updated(self, event_dict):
+        with self._data_lock:
+            self._activity_updated = True
+
+    def _update_plot(self, drawing_paths, extents):
+        self._logger.info("Updating plot")
+        canvas = self._canvas
+        ax = self._pos_xy_axis
+
+        ax.clear()
+        for path in drawing_paths:
+            ax.plot(path[:,0], path[:,1], 'b-')
+        ax.axis(extents)
+        canvas.draw()
+
+    def on_timer(self):
+        # Update UI if any params are dirty
+        need_update = False
+
+        with self._data_lock:
+            if self._activity_updated:
+                need_update = True
+                self._activity_updated = False
+
+        if need_update:
+            self._current_activity.update_geometry()
+            drawing_paths, extents = self._current_activity.get_preview()
+            self._update_plot(drawing_paths, extents)
+
+        # Schedule next update
+        self._frame.after(self._timer_interval_ms, self.on_timer)
 
     def get_param(self, name):
         return self._params[name]
@@ -138,9 +193,6 @@ class RobotControlFrame(object):
 
     def get_pos_figure(self):
         return self._pos_figure
-
-    def get_pos_xy_axis(self):
-        return self._pos_xy_axis
 
     def get_pos_polar_axis(self):
         return self._pos_polar_axis
@@ -152,61 +204,37 @@ class RobotControlFrame(object):
     def get_tk_frame(self):
         return self._frame
 
-class SpirographAppController(object):
-    def __init__(self):
-        self.params = {"turns": 6, "l": 0.5, "k": 0.25, "R": 25.0}
+class DrawbotApp(object):
+    def __init__(self, master=None, **kwargs):
+        self.frame = ttk.Frame(master)
+        self.frame.pack()
 
-class DrawBotGuiController(object):
-    def __init__(self, app_frame):
-        self._app_frame = app_frame
-        self._timer_interval_ms = 100
+        # TODO: Support multiple robots!
+        drawbot = build_cheap_drawbot()
 
-        self._mode = "spirograph"
-        self._data_lock = threading.Lock()
-        self._params_dirty = False
-        self._params = {
-            "spirograph": {"turns": 6,
-                           "l": 0.5, "l_min": 0.01, "l_max": 0.99,
-                           "k": 0.25, "k_min": 0.01, "k_max": 0.99,
-                           "R": 25.0, "R_min": 10.0, "R_max": 30.0}
-        }
+        activities = []
+        spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)
+        activities.append(spirograph_activity)
 
-        self._hmi_handlers = {
-            "spirograph": self._handle_hmi_event_spirograph
-        }
-        self._param_handlers = {
-            "spirograph": self._update_params_spirograph
-        }
+        self.robot_control_frame = RobotControlFrame(self.frame, activities)
 
-        # Bootstrap timer update
-        self._app_frame.after(100, self.on_timer)
+        # Init HMI driver if requested
+        self.hmi_driver = None
+        axes_configs = [
+            {"name": "axis0", "centered": False},
+            {"name": "axis1", "centered": False},
+            {"name": "axis2", "centered": False},
+            {"name": "joy_x", "centered": True},
+            {"name": "joy_y", "centered": True},
+            {"name": "button0", "centered": False}]
+        if "hmi_port" in kwargs:
+            self.hmi_driver = hmi_driver.RobotHMIDriver(kwargs.get("hmi_port"), self.controller.handle_hmi_event, axes_configs)
 
-    def _update_params(self):
-        """
-        Transfer controller model copy of params to view
+    def after(self, num_ms, handler):
+        self.frame.after(num_ms, handler)
 
-        :param params:
-        :return:
-        """
-        handler = self._param_handlers.get(self._mode)
-        if handler is not None:
-            handler()
-
-    def _update_params_spirograph(self):
-        with self._data_lock:
-            params = self._params["spirograph"].copy()
-
-        robot_control_frame = self._app_frame.get_robot_control_frame()
-        for param_name in ["l", "k", "R"]:
-            robot_control_frame.set_spirograph_param(param_name, params[param_name])
-
-        # XXX: Recompute spirograph here
-        # XXX: Replot spirograph here
-
-    def handle_hmi_event(self, event):
-        handler = self._hmi_handlers.get(self._mode)
-        if handler is not None:
-            handler(event)
+    def handle_event(self, event_dict):
+        self.robot_control_frame.handle_event(event_dict)
 
     def _handle_hmi_event_spirograph(self, event):
         mappings = {"axis0": "l", "axis1": "k", "axis2": "R"}
@@ -229,85 +257,10 @@ class DrawBotGuiController(object):
 
             self._params["spirograph"][param_name] = new_value
 
-    def on_timer(self):
-        # Update UI if any params are dirty
-        dirty = False
-
-        with self._data_lock:
-            if self._params_dirty:
-                dirty = True
-                self._params_dirty = False
-
-        if dirty:
-            self._update_params()
-
-        # Schedule next update
-        self._app_frame.after(self._timer_interval_ms, self.on_timer)
-
-class AppFrame(object):
-    def __init__(self, master=None, **kwargs):
-        self.frame = ttk.Frame(master)
-        self.frame.pack()
-
-        self.controller = DrawBotGuiController(self)
-
-        activities = []
-        spirograph_activity = SpirographActivity(master=self.frame, controller=self.controller)
-        activities.append(spirograph_activity)
-
-        self.robot_control_frame = RobotControlFrame(self.frame, self._handle_event, activities)
-
-        # Init HMI driver if requested
-        self.hmi_driver = None
-        axes_configs = [
-            {"name": "axis0", "centered": False},
-            {"name": "axis1", "centered": False},
-            {"name": "axis2", "centered": False},
-            {"name": "joy_x", "centered": True},
-            {"name": "joy_y", "centered": True},
-            {"name": "button0", "centered": False}]
-        if "hmi_port" in kwargs:
-            self.hmi_driver = hmi_driver.RobotHMIDriver(kwargs.get("hmi_port"), self.controller.handle_hmi_event, axes_configs)
-
-    def _handle_event(self, event_dict):
-        callback_name = "on_%s" % event_dict["event"]
-        if hasattr(self, callback_name) and callable(getattr(self, callback_name)):
-            getattr(self, callback_name)(event_dict)
-
-    def get_robot_control_frame(self):
-        return self.robot_control_frame
-
-    def on_update(self, event_dict):
-        event_type = event_dict["event"]
-        if event_type == "update":
-            turns = float(self.robot_control_frame.get_param("turns")["value"])
-            l = self.robot_control_frame.get_param("l")["value"]
-            k = self.robot_control_frame.get_param("k")["value"]
-            R = self.robot_control_frame.get_param("R")["value"]
-            self._update_plot(turns, l, k, R)
-
-    def _update_plot(self, turns, l, k, R):
-        n_turns = turns
-        quality = 4
-        scale = 2 * np.pi / (60.0 * quality)
-        max_points = n_turns * 2.0 * np.pi * n_turns / scale
-
-        theta = np.arange(0, max_points) * scale
-        print(theta)
-        x = R * ((1 - k) * np.cos(theta) + (l * k) * np.cos(((1 - k) / k) * theta))
-        y = R * ((1 - k) * np.sin(theta) - (l * k) * np.sin(((1 - k) / k) * theta))
-
-        print("Updating plot")
-        canvas = self.robot_control_frame.get_canvas()
-        ax = self.robot_control_frame.get_pos_xy_axis()
-
-        ax.clear()
-        ax.plot(x, y, 'b-')
-        ax.axis([-R, R, -R, R])
-        canvas.draw()
-
-    def after(self, num_ms, handler):
-        self.frame.after(num_ms, handler)
+    def handle_hmi_event(self, event):
+        handler = self._hmi_handlers.get(self._mode)
+        if handler is not None:
+            handler(event)
 
 def center(toplevel):
     # From Wayner Werner's answer at http://stackoverflow.com/a/3353112
@@ -319,9 +272,15 @@ def center(toplevel):
     y = h/2 - size[1]/2
     toplevel.geometry("%dx%d+%d+%d" % (size + (x, y)))
 
+def _setup_logging():
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(name)-12s %(levelname)-8s: %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
+
 def main():
+    _setup_logging()
     root = Tk.Tk()
-    app = AppFrame(root) #, hmi_port="COM37")
+    app = DrawbotApp(root) #, hmi_port="COM37")
     center(root)
     root.mainloop()
 

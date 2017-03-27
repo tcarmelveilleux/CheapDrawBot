@@ -16,7 +16,7 @@ from utils.geometry import *
 from utils.hpglutils import save_path_as_hpgl
 from utils.plotutils import plot_feasible_xy_theta
 from numpy import arange
-from drawbot_driver import RobotDriver, RobotKinematics
+from drawbot_driver import DrawbotDriver, DrawbotKinematics
 
 MIN_US_A = 1952.25
 MIN_ANGLE_RAD_A = pi/4.0
@@ -68,28 +68,31 @@ def pen_down(maestro):
     time.sleep(0.3)
 
 
-class CheapDrawBotKinematics(RobotKinematics):
+class CheapDrawBotKinematics(DrawbotKinematics):
     def __init__(self, *args, **kwargs):
         super(CheapDrawBotKinematics, self).__init__(*args, **kwargs)
-        self.pa = (-65.0, 0.0)
-        self.pb = (65.0, 0.0)
-        self.ra = 40.0
-        self.rb = 40.0
-        self.la = 95.0
-        self.lb = 95.0
+        self.pa = kwargs.get("pa", (-65.0, 0.0))
+        self.pb = kwargs.get("pb", (65.0, 0.0))
+        self.ra = kwargs.get("ra", 40.0)
+        self.rb = kwargs.get("rb", 40.0)
+        self.la = kwargs.get("la", 95.0)
+        self.lb = kwargs.get("lb", 95.0)
         # ext_co: extension coincident with la
         # ext_orth: extension orthogogonal to tip of ext_co
-        self.ext_co = 18.0
-        self.ext_orth = 9.5
+        self.ext_co = kwargs.get("ext_co", 18.0)
+        self.ext_orth = kwargs.get("ext_orth", 9.5)
 
         # When la/lb doing "the splits" at the bottom, how far from the very bottom do we allow
-        self.min_y_dist_from_bottom_line = 5.0
+        self.min_y_dist_from_bottom_line = kwargs.get("min_y_dist_from_bottom_line", 5.0)
 
         # Min/max angles achievable by servos (referenced to pa/pa)
-        self.min_theta = pi / 16.0
-        self.max_theta = 15.0 * pi / 16.0
+        self.min_theta = kwargs.get("min_theta", pi / 16.0)
+        self.max_theta = kwargs.get("max_theta", 15.0 * pi / 16.0)
 
-    def respects_external_constraints(self, pex, pey, theta1, theta2):
+    def respects_external_constraints(self, endpoint, thetas):
+        pex, pey = tuple(endpoint)
+        theta1, theta2 = tuple(thetas)
+
         pax, pay = self.pa
         pbx, pby = self.pb
         if pey < (pay + self.ra + self.ext_orth + self.min_y_dist_from_bottom_line):
@@ -106,7 +109,9 @@ class CheapDrawBotKinematics(RobotKinematics):
 
         return True
 
-    def forward_kine(self, theta1, theta2):
+    def forward_kine(self, thetas, **kwargs):
+        theta1, theta2 = tuple(thetas)
+
         lp = sqrt((self.la + self.ext_co) ** 2.0 + self.ext_orth ** 2.0)
         alpha = atan2(self.ext_orth, (self.la + self.ext_co))
         pax, pay = self.pa
@@ -135,12 +140,12 @@ class CheapDrawBotKinematics(RobotKinematics):
         pex = cirax + (lp * cos(phi_p))
         pey = ciray + (lp * sin(phi_p))
 
-        if not self.respects_external_constraints(pex, pey, theta1, theta2):
+        if not self.respects_external_constraints((pex, pey), (theta1, theta2)):
             raise ValueError("No solution found for forward kine")
 
         return (pex, pey, phi1, phi2, cx, cy)
 
-    def inverse_kine(self, pe):
+    def inverse_kine(self, end_point, **kwargs):
         # pe: Point of end effector (x, y) for which to find the theta1/theta2
 
         # ext_co: extension coincident with la
@@ -149,7 +154,7 @@ class CheapDrawBotKinematics(RobotKinematics):
         alpha = atan2(self.ext_orth, (self.la + self.ext_co))
         pax, pay = self.pa
         pbx, pby = self.pb
-        pex, pey = pe
+        pex, pey = end_point
 
         # Find intersection between circle centered at `pe` of radius `lp`
         # and circle A. Keep highest y
@@ -173,7 +178,7 @@ class CheapDrawBotKinematics(RobotKinematics):
         theta1 = atan2((ciray - pay), (cirax - pax))
         theta2 = atan2((cirby - pby), (cirbx - pbx))
 
-        if self.respects_external_constraints(pex, pey, theta1, theta2):
+        if self.respects_external_constraints((pex, pey), (theta1, theta2)):
             return (theta1, theta2, cx, cy)
         else:
             raise ValueError("No reverse kine solution found")
@@ -214,7 +219,7 @@ class CheapDrawBotKinematics(RobotKinematics):
         for theta1 in arange(max_angle, min_angle, -ang_resolution):
             for theta2 in arange(min_angle, max_angle, ang_resolution):
                 try:
-                    pex, pey, phi1, phi2, cx, cy = self.forward_kine(theta1, theta2)
+                    pex, pey, phi1, phi2, cx, cy = self.forward_kine((theta1, theta2))
                     feas_thetas.append((theta1, theta2))
                     feas_points.append((pex, pey))
                 except:
@@ -268,3 +273,13 @@ class CheapDrawBotKinematics(RobotKinematics):
             plot_feasible_xy_theta(feas_path_points=feas_points, feas_thetas=feas_thetas, axis_limits=axis_limits)
 
         return feas_points, feas_thetas
+
+class CheapDrawbot(DrawbotDriver):
+    def __init__(self, drawbot_kinematics, *args, **kwargs):
+        super(CheapDrawbot, self).__init__(drawbot_kinematics, *args, **kwargs)
+
+def build_cheap_drawbot(**kwargs):
+    drawbot_kinematics = CheapDrawBotKinematics(**kwargs)
+    drawbot = CheapDrawbot(drawbot_kinematics, **kwargs)
+
+    return drawbot

@@ -47,6 +47,10 @@ class DrawbotDriver(object):
     def pen_diameter_mm(self):
         return self._pen_diameter_mm
 
+    @property
+    def kine(self):
+        return self._drawbot_kine
+
     def connect(self, **kwargs):
         if self._connected:
             self._logger.warn("Already connected, ignoring!")
