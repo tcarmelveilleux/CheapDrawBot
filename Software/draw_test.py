@@ -170,14 +170,14 @@ def draw_hpgl(filename, maestro_com_port, delay=0.02, seg_len=0.1):
         accumulated_path = []
         for command in hpgl_data:
             if isinstance(command, PU):
-                pex, pey = cheap_draw_bot.local_coord_from_hgpl((command.x[0], command.y[0]))
+                pex, pey = cheap_draw_bot.local_coord_from_hpgl((command.x[0], command.y[0]))
                 accumulated_path = [(pex, pey)]
                 pen_up(maestro)
                 pen_is_up = True
             elif isinstance(command, PD):
                 # Pen down here
                 for coord in command.xy:
-                    pex, pey = cheap_draw_bot.local_coord_from_hgpl((coord.x, coord.y))
+                    pex, pey = cheap_draw_bot.local_coord_from_hpgl((coord.x, coord.y))
                     accumulated_path.append((pex, pey))
 
                 points, thetas = cheap_draw_bot.gen_path(accumulated_path, seg_len)

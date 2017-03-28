@@ -177,3 +177,7 @@ class Activity(object):
     def update_geometry(self):
         # Recompute the internal geometry on request from the controller.
         raise NotImplementedError()
+
+    def start_drawing(self):
+        # Start drawing on the robot. May not apply for real-time activities
+        pass

@@ -12,23 +12,80 @@ import threading
 import Queue
 import logging
 import json
-from collections import deque
+import numpy as np
+from collections import deque, namedtuple
 
 class DrawbotDriverException(IOError):
     pass
+
+
+class DrawbotCommand(object):
+    pass
+
+
+class DrawbotPenUp(DrawbotCommand):
+    def __init__(self, height_mm=10.0):
+        self._height_mm = height_mm
+
+    @property
+    def height_mm(self):
+        return self._height_mm
+
+
+class DrawbotPenDown(DrawbotCommand):
+    def __init__(self, height_mm=0.0):
+        self._height_mm = height_mm
+
+    @property
+    def height_mm(self):
+        return self._height_mm
+
+
+class DrawbotPenGoto(DrawbotCommand):
+    def __init__(self, position, is_native):
+        self._position = np.asarray(position, dtype="float64")
+        self._is_native = is_native
+
+    @property
+    def position(self):
+        return self.position
+
+    @property
+    def is_native(self):
+        return self._is_native
+
+
+class DrawbotDrawPath(DrawbotCommand):
+    def __init__(self, path_points, is_native=False):
+        self._path_points = np.asarray(path_points, dtype="float64")
+        self._is_native = is_native
+
+    @property
+    def path_points(self):
+        return self._path_points
+
+    @property
+    def is_native(self):
+        return self._is_native
+
+
+class DrawbotAbort(DrawbotCommand):
+    def __init__(self):
+        pass
+
 
 class DrawbotDriver(object):
     def __init__(self, drawbot_kinematics, *args, **kwargs):
         self._drawbot_kine = drawbot_kinematics
         self._connected = False
         # Hint for delay between point updates
-        self._point_delay_sec = kwargs.get("point_delay_ms", 0.0)
+        self._point_delay_sec = kwargs.get("point_delay_ms", 0.005)
         self._pen_diameter_mm = kwargs.get("pen_diameter_mm", 0.5)
         self._thread = threading.Thread(target=self._process, name=kwargs.get("thread_name", "drawbot_driver"))
         self._thread.daemon = kwargs.get("daemon", True)
         self._running = False
         self._queue = Queue.Queue()
-        self._thetas_path = deque()
+        self._drawing_prog = deque()
 
         self._logger = logging.getLogger("drawbot_driver")
 
@@ -58,6 +115,7 @@ class DrawbotDriver(object):
             return
 
         if not self._thread.is_alive():
+            self._running = True
             self._thread.start()
 
     def disconnect(self):
@@ -65,41 +123,76 @@ class DrawbotDriver(object):
             pass
 
     def abort_path(self):
-        self._queue.put({"cmd": "abort"})
+        self._queue.put(DrawbotAbort())
 
     def pen_up(self, height_mm=10.0):
-        self._queue.put({"cmd": "set_pen_height", "height_mm": height_mm})
+        self._queue.put(DrawbotPenUp(height_mm=height_mm))
 
     def pen_down(self, height_mm=0.0):
-        self._queue.put({"cmd": "set_pen_height", "height_mm": height_mm})
+        self._queue.put(DrawbotPenDown(height_mm=height_mm))
 
-    def goto(self, end_point):
-        self._queue.put({"cmd": "goto", "end_point": end_point})
+    def goto(self, position, is_native=False):
+        self._queue.put(DrawbotPenGoto(position, is_native=is_native))
 
-    def goto_thetas(self, thetas):
-        self._queue.put({"cmd": "goto_thetas", "thetas": thetas})
-
-    def draw_path(self, path_points):
-        self._queue.put({"cmd": "draw_path", "path_points": path_points})
-
-    def draw_thetas_path(self, path_thetas):
-        self._queue.put({"cmd": "draw_thetas_path", "path_thetas": path_thetas})
+    def draw_path(self, path_points, is_native=False):
+        self._queue.put(DrawbotDrawPath(path_points, is_native=is_native))
 
     def shutdown(self, timeout=1.0):
         if self._thread.is_alive():
-            self._queue.put({"cmd": "shutdown"})
+            self._queue.put(False)
             self._thread.join(timeout)
             if self._thread.is_alive():
                 self._logger.error("Could not join robot driver thread to shutdown!")
 
     def _process(self):
-        # TODO: impl!
+        self._logger.info("Drawbot driver thread started")
         while self._running:
-            cmd = self._queue.get(block=True)
-            if cmd["cmd"] == "shutdown":
-                self._running = False
+            cmd = None
+            try:
+                cmd = self._queue.get(block=True,timeout=self._point_delay_sec)
+            except Queue.Empty:
+                # No new command, run next robot command
+                if len(self._drawing_prog) == 0:
+                    continue
 
+                drawing_cmd = self._drawing_prog.popleft()
+                self._execute(drawing_cmd)
+
+            # If no command to execute, go back to waiting
+            if cmd is None:
+                continue
+
+            if cmd is False:
+                # Shutdown requested
+                self._running = False
+                continue
+
+            # Handle all commands
+            if isinstance(cmd, DrawbotDrawPath):
+                path = cmd.path_points
+                is_native = cmd.is_native
+
+                for idx in xrange(path.shape[0]):
+                    self._drawing_prog.append({"cmd": ("goto_native" if is_native else "goto_point"), "point": path[idx,:]})
+            elif isinstance(cmd, DrawbotPenUp):
+                self._drawing_prog.append({"cmd": "pen_up", "height_mm": cmd.height_mm})
+            elif isinstance(cmd, DrawbotPenDown):
+                self._drawing_prog.append({"cmd": "pen_down", "height_mm": cmd.height_mm})
+            elif isinstance(cmd, DrawbotPenDown):
+                self._drawing_prog.append({"cmd": "pen_down", "height_mm": cmd.height_mm})
+            elif isinstance(cmd, DrawbotAbort):
+                self._drawing_prog.append({"cmd": "abort"})
+
+        self._logger.info("Drawbot driver thread exited")
         return
+
+    def _execute(self, drawing_cmd):
+        if drawing_cmd["cmd"] == "goto_point":
+            self._logger.info("goto_point: %s", drawing_cmd["point"])
+        elif drawing_cmd["cmd"] in ("pen_up", "pen_down"):
+            self.set_pen_height_impl(height=drawing_cmd["height_mm"])
+        else:
+            self._logger.warn("Unknown command: %s", drawing_cmd)
 
     def connect_impl(self):
         raise NotImplementedError()
@@ -107,7 +200,7 @@ class DrawbotDriver(object):
     def disconnect_impl(self):
         raise NotImplementedError()
 
-    def set_pen_height_impl(self):
+    def set_pen_height_impl(self, height_mm):
         raise NotImplementedError()
 
     def set_thetas_impl(self, thetas):
@@ -181,11 +274,16 @@ class DrawbotKinematics(object):
             raise ValueError("No reverse kine solution found")
 
     def get_work_area(self, spatial_res_mm=0.5, theta_res_rad=0.05, **kwargs):
-        # List of end_points forming a closed path around the feasible area
-        feas_path_points = []
+        # Samples of the work area
+        work_points = []
         # List of thetas scanned to have been feasible
-        feas_thetas = []
-        return feas_path_points, feas_thetas
+        work_natives = []
+        # Closed path around work area
+        work_path = []
+        return work_points, work_natives, work_path
+
+    def get_work_area_centroid(self):
+        return np.asarray(self.work_area_config.get("work_centroid", [0.0, 0.0]))
 
     def draw_robot_preview(self, ax, show_robot=False, show_work_area=True, **kwargs):
         """

@@ -216,7 +216,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
 
         return segment_points, all_angles
 
-    def local_coord_from_hgpl(self, p):
+    def local_coord_from_hpgl(self, p):
         return ((p[0] * 25e-3) + self.pa[0], (p[1] * 25e-3) + self.pa[1])
 
     def get_work_area(self, min_angle=pi / 16.0, max_angle=15.0 * pi / 16.0, ang_resolution=0.05, xy_resolution=0.5,

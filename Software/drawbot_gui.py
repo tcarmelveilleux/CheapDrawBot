@@ -138,9 +138,9 @@ class RobotControlFrame(object):
 
         self._oper_notebook.pack(side=Tk.TOP, fill=Tk.X)
 
-        # Update button
-        self._update_button = Tk.Button(master=self._frame, text="Update", command=lambda: self.handle_event({"event": "update"}))
-        self._update_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH)
+        # Draw button
+        self._draw_button = Tk.Button(master=self._frame, text="Draw!", command=lambda: self.handle_event({"event": "drawbot_go"}))
+        self._draw_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH)
 
         ##################
 
@@ -157,6 +157,9 @@ class RobotControlFrame(object):
     def on_activity_updated(self, event_dict):
         with self._data_lock:
             self._activity_updated = True
+
+    def on_drawbot_go(self, event_dict):
+        self._current_activity.start_drawing()
 
     def _update_plot(self):
         self._logger.info("Updating plot")
@@ -175,8 +178,9 @@ class RobotControlFrame(object):
             self._current_activity.update_geometry()
             ax = self._pos_xy_axis
             ax.clear()
+            ax.axis("equal")
+            self._current_activity.draw_preview(ax=ax)
             self._drawbot.kine.draw_robot_preview(ax=ax)
-            #self._current_activity.draw_preview(ax=ax)
             self._update_plot()
 
         # Schedule next update
@@ -208,6 +212,7 @@ class DrawbotApp(object):
 
         # TODO: Support multiple robots!
         drawbot = build_cheap_drawbot()
+        drawbot.connect()
 
         activities = []
         spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)

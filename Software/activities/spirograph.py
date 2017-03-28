@@ -46,8 +46,10 @@ class SpirographActivity(Activity):
 
         theta = np.arange(0, max_points) * scale
 
-        self._x = R * ((1 - k) * np.cos(theta) + (l * k) * np.cos(((1 - k) / k) * theta))
-        self._y = R * ((1 - k) * np.sin(theta) - (l * k) * np.sin(((1 - k) / k) * theta))
+        tx, ty = tuple(self._drawbot.kine.get_work_area_centroid())
+
+        self._x = tx + R * ((1 - k) * np.cos(theta) + (l * k) * np.cos(((1 - k) / k) * theta))
+        self._y = ty + R * ((1 - k) * np.sin(theta) - (l * k) * np.sin(((1 - k) / k) * theta))
 
     def draw_preview(self, ax):
         xmin = min(self._x)
@@ -59,6 +61,13 @@ class SpirographActivity(Activity):
 
         extents = [xmin, xmax, ymin, ymax]
 
-        ax.clear()
         ax.plot(drawing_path[:, 0], drawing_path[:, 1], 'b-')
         #ax.axis(extents)
+
+    def start_drawing(self):
+        self._drawbot.pen_up()
+        self._drawbot.goto((self._x[0], self._y[0]))
+        self._drawbot.pen_down()
+        drawing_path = np.column_stack((self._x, self._y))
+        self._drawbot.draw_path(drawing_path)
+        self._drawbot.pen_up()

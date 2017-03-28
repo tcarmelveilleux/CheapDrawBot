@@ -233,36 +233,29 @@ def concave_hull_wheel(all_xy, wheel_radius):
                 # Cannot find two circles
                 continue
 
-            # Find displacement vector from last point to candidate
-            path_vec = (candidate[0] - last_point[0], candidate[1] - last_point[1])
-
-            # Try both candidates to find a circle that is "outside" the path. Since we are traversing CCW,
-            # the outside circle is that one whose center makes a negative angle signed difference with the
-            # current path segment
-
-            outside_circle_center = None
-            num_outside = 0
+            # Try both candidates to find a circle that is empty
+            empty_circle_center = None
+            num_empty = 0
             for circle_center in cir_candidates:
-                center_vec = (circle_center[0] - last_point[0], circle_center[1] - last_point[1])
-                if angle_between_signed(path_vec, center_vec) < 0:
-                    num_outside += 1
-                    outside_circle_center = circle_center
+                if circle_empty(candidates, circle_center, wheel_radius):
+                    num_empty += 1
+                    empty_circle_center = circle_center
 
-            if num_outside == 0:
+            if num_empty == 0:
                 # No empty circles: not a circle rolling on the outside
                 # print("Found no empty: %s" % repr(cir_candidates))
                 continue
-            elif num_outside == 2:
+            elif num_empty == 2:
                 # Should never see two emtpy circles
-                print("Found two outside circle candidates for last point %s: %s" % (last_point, cir_candidates))
+                # print("Found two empty circle candidates for last point %s: %s" % (last_point, cir_candidates))
                 continue
 
             # Find rotation of "wheel" by tracing vector v1 from center of circle to last point, and v2 from center
             # of circle to candidate. If angle is negative, wheel is rotating counter-clockwise around points.
             # Imagine trying to see if a "spoke" on a wheel turned clockwise while rotating counter-clockwise around
             # a circle.
-            v1 = (last_point[0] - outside_circle_center[0], last_point[1] - outside_circle_center[1])
-            v2 = (candidate[0] - outside_circle_center[0], candidate[1] - outside_circle_center[1])
+            v1 = (last_point[0] - empty_circle_center[0], last_point[1] - empty_circle_center[1])
+            v2 = (candidate[0] - empty_circle_center[0], candidate[1] - empty_circle_center[1])
 
             if angle_between_signed(v1, v2) >= 0:
                 continue
@@ -272,7 +265,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
                 # print("Found a new minimum candidate: %s", repr(all_xy[min_idx]))
                 min_dist = dist
                 min_idx = idx
-                min_circle_center = outside_circle_center
+                min_circle_center = empty_circle_center
                 found = True
                 # break
 
