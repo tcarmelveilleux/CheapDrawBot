@@ -11,10 +11,13 @@ Copyright 2017, Tennessee Carmel-Veilleux.
 
 import pololu_maestro
 import time
+import json
 from numpy import pi
+import numpy as np
 from utils.geometry import *
 from utils.hpglutils import save_path_as_hpgl
 from utils.plotutils import plot_feasible_xy_theta
+from utils.hashutils import params_hash
 from numpy import arange
 from drawbot_driver import DrawbotDriver, DrawbotKinematics
 
@@ -88,6 +91,12 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         # Min/max angles achievable by servos (referenced to pa/pa)
         self.min_theta = kwargs.get("min_theta", pi / 16.0)
         self.max_theta = kwargs.get("max_theta", 15.0 * pi / 16.0)
+
+        self.load_work_area_config()
+
+    def get_kine_hash(self):
+        return params_hash([self.pa[0], self.pa[1], self.pb[0], self.pb[1], self.ra, self.rb, self.la, self.lb, self.ext_co, self.ext_orth,
+                            self.min_y_dist_from_bottom_line, self.min_theta, self.max_theta])
 
     def respects_external_constraints(self, endpoint, thetas):
         pex, pey = tuple(endpoint)
@@ -210,18 +219,23 @@ class CheapDrawBotKinematics(DrawbotKinematics):
     def local_coord_from_hgpl(self, p):
         return ((p[0] * 25e-3) + self.pa[0], (p[1] * 25e-3) + self.pa[1])
 
-    def get_feasible_area(self, min_angle=pi / 16.0, max_angle=15.0 * pi / 16.0, ang_resolution=0.05, xy_resolution=0.5,
-                          **kwargs):
-        feas_thetas = []
-        feas_points = []
+    def get_work_area(self, min_angle=pi / 16.0, max_angle=15.0 * pi / 16.0, ang_resolution=0.05, xy_resolution=0.5,
+                      **kwargs):
+        # Use cached data if available
+        if "work_path" in self.work_area_config:
+            return np.asarray(self.work_area_config["work_points"]), np.asarray(self.work_area_config["work_natives"]),\
+                   np.asarray(self.work_area_config["work_path"])
+
+        work_natives = []
+        work_points = []
 
         # Coarse angle scan to find extreme X/Y for finer X/Y scan
         for theta1 in arange(max_angle, min_angle, -ang_resolution):
             for theta2 in arange(min_angle, max_angle, ang_resolution):
                 try:
                     pex, pey, phi1, phi2, cx, cy = self.forward_kine((theta1, theta2))
-                    feas_thetas.append((theta1, theta2))
-                    feas_points.append((pex, pey))
+                    work_natives.append((theta1, theta2))
+                    work_points.append((pex, pey))
                 except:
                     # No solution founds
                     pass
@@ -231,7 +245,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         min_y = 1e6
         max_y = -1e6
 
-        for x, y in feas_points:
+        for x, y in work_points:
             if x < min_x:
                 min_x = x
             elif x > max_x:
@@ -242,18 +256,24 @@ class CheapDrawBotKinematics(DrawbotKinematics):
             elif y > max_y:
                 max_y = y
 
-        feas_thetas = []
-        feas_points = []
+        work_natives = []
+        work_points = []
 
         for pey in arange(min_y, max_y, xy_resolution):
             for pex in arange(min_x, max_x, xy_resolution):
                 try:
                     theta1, theta2, cx, cy = self.inverse_kine((pex, pey))
-                    feas_thetas.append((theta1, theta2))
-                    feas_points.append((pex, pey))
+                    work_natives.append((theta1, theta2))
+                    work_points.append((pex, pey))
                 except:
                     # No solution founds
                     pass
+
+        wheel_radius = xy_resolution * 2.0
+        work_path, circle_centers = concave_hull_wheel(work_points, wheel_radius)
+        self.work_area_config["work_path"] = work_path
+        cx, cy, width, height, min_x, max_x, min_y, max_y = centroid_extents(work_path[:-1])
+        self.work_area_config["work_centroid"] = [cx, cy]
 
         # Save HPGL of feasible area
         if kwargs.get("save_hpgl") is not None:
@@ -261,18 +281,40 @@ class CheapDrawBotKinematics(DrawbotKinematics):
             right_top_mm = (2.0 * self.pb[0], 1.25 * max_y)
             path_array_mm = []
 
-            for pex, pey in feas_points:
+            for pex, pey in work_points:
                 path_array_mm.append((pex - self.pa[0], pey))
 
             filename = kwargs.get("save_hpgl")
             save_path_as_hpgl(path_array_mm, left_bottom_mm, right_top_mm, filename)
-        
+
         # Plot feasible area if requested
         if kwargs.get("plot", False):
             axis_limits = [self.pa[0], self.pb[0], 0, 1.25 * max_y] # [xmin, xmax, ymin, ymax]
-            plot_feasible_xy_theta(feas_path_points=feas_points, feas_thetas=feas_thetas, axis_limits=axis_limits)
+            plot_feasible_xy_theta(feas_path_points=work_points, feas_thetas=work_natives, axis_limits=axis_limits)
 
-        return feas_points, feas_thetas
+        # Save computation in cache if required
+        if kwargs.get("save_cache", False):
+            self.save_work_area_config()
+
+        return np.asarray(work_points), np.asarray(work_natives), np.asarray(work_path)
+
+    def draw_robot_preview(self, ax, show_robot=False, show_work_area=True, **kwargs):
+        # If work area was never computed, compute it now
+        if show_work_area:
+            if self.work_area_config.get("work_path") is None:
+                xy_resolution = 0.5
+                _, _, work_path = self.get_work_area(xy_resolution=xy_resolution, save_cache=True)
+            else:
+                work_path = np.asarray(self.work_area_config["work_path"])
+
+            ax.plot(work_path[:, 0], work_path[:, 1], "r-")
+
+        #for idx, cir in enumerate(circle_centers):
+        #    c = plt.Circle((cir[0], cir[1]), wheel_radius, fill=False, color='g')
+        #    t = plt.Text(x=cir[0], y=cir[1], text="%d" % idx)
+        #    ax.add_artist(c)
+        #    ax.add_artist(t)
+
 
 class CheapDrawbot(DrawbotDriver):
     def __init__(self, drawbot_kinematics, *args, **kwargs):

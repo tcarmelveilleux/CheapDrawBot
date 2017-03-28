@@ -210,7 +210,7 @@ def test_leon_path():
 
 def test_feasible_area():
     cheap_draw_bot = CheapDrawBotKinematics()
-    feas_points, feas_thetas = cheap_draw_bot.get_feasible_area(save_hpgl="feasible.plt", plot=True)
+    feas_points, feas_thetas = cheap_draw_bot.get_work_area(save_hpgl="feasible.plt", plot=True)
     # draw_path(feas_thetas, "COM6", delay=0.1)
 
 def draw_spiro():
@@ -233,7 +233,7 @@ def plotify(pathlist):
 def test_concave_hull():
     cheap_draw_bot = CheapDrawBotKinematics()
     xy_resolution = 0.5
-    feas_points, feas_thetas = cheap_draw_bot.get_feasible_area(xy_resolution=xy_resolution)
+    feas_points, feas_thetas = cheap_draw_bot.get_work_area(xy_resolution=xy_resolution)
 
     SAMPLE_POINTS = [
         (0, 0), (1, 0), (2, 0), (3, 0),

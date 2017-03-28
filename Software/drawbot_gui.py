@@ -79,8 +79,9 @@ class RobotController(object):
 # the window is closed with the window manager.
 
 class RobotControlFrame(object):
-    def __init__(self, master, activities, **kwargs):
+    def __init__(self, master, drawbot, activities, **kwargs):
         self._activity_updated = False
+        self._drawbot = drawbot
         self._timer_interval_ms = 100
         self._logger = logging.getLogger("RobotControlFrame")
         self._activities = activities
@@ -157,16 +158,9 @@ class RobotControlFrame(object):
         with self._data_lock:
             self._activity_updated = True
 
-    def _update_plot(self, drawing_paths, extents):
+    def _update_plot(self):
         self._logger.info("Updating plot")
-        canvas = self._canvas
-        ax = self._pos_xy_axis
-
-        ax.clear()
-        for path in drawing_paths:
-            ax.plot(path[:,0], path[:,1], 'b-')
-        ax.axis(extents)
-        canvas.draw()
+        self._canvas.draw()
 
     def on_timer(self):
         # Update UI if any params are dirty
@@ -179,8 +173,11 @@ class RobotControlFrame(object):
 
         if need_update:
             self._current_activity.update_geometry()
-            drawing_paths, extents = self._current_activity.get_preview()
-            self._update_plot(drawing_paths, extents)
+            ax = self._pos_xy_axis
+            ax.clear()
+            self._drawbot.kine.draw_robot_preview(ax=ax)
+            #self._current_activity.draw_preview(ax=ax)
+            self._update_plot()
 
         # Schedule next update
         self._frame.after(self._timer_interval_ms, self.on_timer)
@@ -216,7 +213,7 @@ class DrawbotApp(object):
         spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)
         activities.append(spirograph_activity)
 
-        self.robot_control_frame = RobotControlFrame(self.frame, activities)
+        self.robot_control_frame = RobotControlFrame(self.frame, drawbot, activities)
 
         # Init HMI driver if requested
         self.hmi_driver = None

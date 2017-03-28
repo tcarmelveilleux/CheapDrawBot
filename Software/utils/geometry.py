@@ -184,7 +184,6 @@ def sorted_by_manhattan_distance(all_xy, p, within):
     return sorted(candidates, key=lambda p2: (abs(p2[0] - p[0]) + abs(p2[1] - p[1])))
 
 
-
 def concave_hull_wheel(all_xy, wheel_radius):
     # Get centroid and bounding box of points
     cx, cy, width, height, min_x, max_y, min_y, max_y = centroid_extents(all_xy)

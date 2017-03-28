@@ -49,7 +49,7 @@ class SpirographActivity(Activity):
         self._x = R * ((1 - k) * np.cos(theta) + (l * k) * np.cos(((1 - k) / k) * theta))
         self._y = R * ((1 - k) * np.sin(theta) - (l * k) * np.sin(((1 - k) / k) * theta))
 
-    def get_preview(self):
+    def draw_preview(self, ax):
         xmin = min(self._x)
         xmax = max(self._x)
         ymin = min(self._y)
@@ -58,4 +58,7 @@ class SpirographActivity(Activity):
         drawing_path = np.column_stack((self._x, self._y))
 
         extents = [xmin, xmax, ymin, ymax]
-        return [drawing_path], extents
+
+        ax.clear()
+        ax.plot(drawing_path[:, 0], drawing_path[:, 1], 'b-')
+        #ax.axis(extents)

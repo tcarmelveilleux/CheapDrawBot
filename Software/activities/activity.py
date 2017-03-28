@@ -167,11 +167,13 @@ class Activity(object):
         self._param_frame.pack(side=Tk.TOP, fill=Tk.X)
         return self._param_frame
 
-    def update_geometry(self):
-        # Recompute the internal geometry on request from the controller.
+    def draw_preview(self, ax):
+        """
+        Draw a preview of the robot path on the given Matplotlib axis
+        :param ax: matplotlib axis on which to draw. Externally provided
+        """
         raise NotImplementedError()
 
-    def get_preview(self):
-        # Return a tuple (drawing_paths, extents), where "drawing_paths" is a list of x,y points and "extents" is
-        # a list [xmin, xmax, ymin, ymax].
+    def update_geometry(self):
+        # Recompute the internal geometry on request from the controller.
         raise NotImplementedError()

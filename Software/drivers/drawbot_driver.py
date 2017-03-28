@@ -11,6 +11,7 @@ Copyright 2017, Tennessee Carmel-Veilleux.
 import threading
 import Queue
 import logging
+import json
 from collections import deque
 
 class DrawbotDriverException(IOError):
@@ -117,7 +118,42 @@ class DrawbotKinematics(object):
 
     """
     def __init__(self, *args, **kwargs):
+        self.work_area_config = {}
         pass
+
+    def get_kine_hash(self):
+        """
+        Return a driver-specific hash given the configuration of the robot, which can be used to generate
+        a cache key.
+        :return: A driver-specific hash string or None if no hash can be computed
+        """
+        return None
+
+    def load_work_area_config(self):
+        """
+        Try to load work area config from cached file
+
+        :return: True if work area config was loaded, False otherwise
+        """
+        hash = self.get_kine_hash()
+        if hash is None:
+            return False
+
+        try:
+            with open("%s_%s_cache.json" % (self.__class__.__name__, hash), "rb") as cache_file:
+                work_area_config = json.load(cache_file)
+                self.work_area_config.update(work_area_config)
+                return True
+        except IOError:
+            return False
+
+    def save_work_area_config(self):
+        """
+        Try to save work area config into cache file
+        """
+        hash = self.get_kine_hash()
+        with open("%s_%s_cache.json" % (self.__class__.__name__, hash), "wb+") as cache_file:
+            json.dump(self.work_area_config, cache_file, indent=2)
 
     def respects_external_constraints(self, end_point, thetas):
         return False
@@ -144,9 +180,18 @@ class DrawbotKinematics(object):
         else:
             raise ValueError("No reverse kine solution found")
 
-    def get_feasible_area(self, spatial_res_mm=0.5, theta_res_rad=0.05, **kwargs):
+    def get_work_area(self, spatial_res_mm=0.5, theta_res_rad=0.05, **kwargs):
         # List of end_points forming a closed path around the feasible area
         feas_path_points = []
         # List of thetas scanned to have been feasible
         feas_thetas = []
         return feas_path_points, feas_thetas
+
+    def draw_robot_preview(self, ax, show_robot=False, show_work_area=True, **kwargs):
+        """
+        Draw preview of robot and work area on matplotlib axis
+        :param ax:
+        :param show_robot:
+        :param show_work_area:
+        """
+        pass
