@@ -20,10 +20,11 @@ class SpirographActivity(Activity):
             "turns": ActivityParam(name="turns", desc="Num Turns", fmt="%.1f", min_val=1.0, max_val=10.0, value=6.0),
             "l": ActivityParam(name="l", desc="l", fmt="%.3f", min_val=0.01, max_val=0.99, value=0.5),
             "k": ActivityParam(name="k", desc="k", fmt="%.3f", min_val=0.01, max_val=0.99, value=0.35),
-            "R": ActivityParam(name="R", desc="R", fmt="%.1f", min_val=10.0, max_val=30.0, value=20.0),
+            "R": ActivityParam(name="R", desc="R", fmt="%.1f", min_val=10.0, max_val=30.0, value=30.0),
         }
         self._x = []
         self._y = []
+        self.update_geometry()
 
     def handle_event(self, event_dict):
         # If parent handled event, return

@@ -33,7 +33,7 @@ else:
     from tkinter import ttk
 
 import Queue
-import hmi_driver
+#import hmi_driver
 
 class RobotController(object):
     def __init__(self, **kwargs):
@@ -80,7 +80,7 @@ class RobotController(object):
 
 class RobotControlFrame(object):
     def __init__(self, master, drawbot, activities, **kwargs):
-        self._activity_updated = False
+        self._activity_updated = True
         self._drawbot = drawbot
         self._timer_interval_ms = 100
         self._logger = logging.getLogger("RobotControlFrame")

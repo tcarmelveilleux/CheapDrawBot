@@ -79,7 +79,7 @@ class DrawbotDriver(object):
         self._drawbot_kine = drawbot_kinematics
         self._connected = False
         # Hint for delay between point updates
-        self._point_delay_sec = kwargs.get("point_delay_ms", 0.005)
+        self._point_delay_sec = kwargs.get("point_delay_ms", 0.01)
         self._pen_diameter_mm = kwargs.get("pen_diameter_mm", 0.5)
         self._thread = threading.Thread(target=self._process, name=kwargs.get("thread_name", "drawbot_driver"))
         self._thread.daemon = kwargs.get("daemon", True)
@@ -116,7 +116,9 @@ class DrawbotDriver(object):
 
         if not self._thread.is_alive():
             self._running = True
+            self.connect_impl()
             self._thread.start()
+            
 
     def disconnect(self):
         if not self._connected:
@@ -172,6 +174,11 @@ class DrawbotDriver(object):
                 path = cmd.path_points
                 is_native = cmd.is_native
 
+                # Convert to natives
+                if not is_native:
+                    points, path = self._drawbot_kine.gen_path(path, self._pen_diameter_mm / 2.0)
+                    is_native = True
+
                 for idx in xrange(path.shape[0]):
                     self._drawing_prog.append({"cmd": ("goto_native" if is_native else "goto_point"), "point": path[idx,:]})
             elif isinstance(cmd, DrawbotPenUp):
@@ -189,8 +196,11 @@ class DrawbotDriver(object):
     def _execute(self, drawing_cmd):
         if drawing_cmd["cmd"] == "goto_point":
             self._logger.info("goto_point: %s", drawing_cmd["point"])
+        elif drawing_cmd["cmd"] == "goto_native":
+            #sself._logger.info("goto_native: %s", drawing_cmd["point"])
+            self.set_natives_impl(drawing_cmd["point"])
         elif drawing_cmd["cmd"] in ("pen_up", "pen_down"):
-            self.set_pen_height_impl(height=drawing_cmd["height_mm"])
+            self.set_pen_height_impl(height_mm=drawing_cmd["height_mm"])
         else:
             self._logger.warn("Unknown command: %s", drawing_cmd)
 
@@ -203,7 +213,7 @@ class DrawbotDriver(object):
     def set_pen_height_impl(self, height_mm):
         raise NotImplementedError()
 
-    def set_thetas_impl(self, thetas):
+    def set_natives_impl(self, natives):
         raise NotImplementedError()
 
 class DrawbotKinematics(object):

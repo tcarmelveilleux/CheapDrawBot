@@ -12,13 +12,12 @@ Copyright 2017, Tennessee Carmel-Veilleux.
 import pololu_maestro
 import time
 import json
-from numpy import pi
+from numpy import pi, arange
 import numpy as np
 from utils.geometry import *
 from utils.hpglutils import save_path_as_hpgl
 from utils.plotutils import plot_feasible_xy_theta
 from utils.hashutils import params_hash
-from numpy import arange
 from drawbot_driver import DrawbotDriver, DrawbotKinematics
 
 MIN_US_A = 1952.25
@@ -214,7 +213,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
             except:
                 pass
 
-        return segment_points, all_angles
+        return np.asarray(segment_points, dtype="float64"), np.asarray(all_angles, dtype="float64")
 
     def local_coord_from_hpgl(self, p):
         return ((p[0] * 25e-3) + self.pa[0], (p[1] * 25e-3) + self.pa[1])
@@ -319,6 +318,35 @@ class CheapDrawBotKinematics(DrawbotKinematics):
 class CheapDrawbot(DrawbotDriver):
     def __init__(self, drawbot_kinematics, *args, **kwargs):
         super(CheapDrawbot, self).__init__(drawbot_kinematics, *args, **kwargs)
+        self.serial_device = kwargs.get("serial_device", "COM6")
+        self.maestro = None        
+        
+    def connect_impl(self):
+        self.maestro = pololu_maestro.PololuMaestro(self.serial_device)
+        self.maestro.connect()
+        
+    def disconnect_impl(self):
+        if self.maestro is not None:
+            self.maestro.close()
+
+    def set_pen_height_impl(self, height_mm):
+        if height_mm > 0.1:
+            self.maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_UP_US * COUNTS_PER_US))
+        else:
+            self.maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_DOWN_US * COUNTS_PER_US))
+        time.sleep(0.3)
+
+    def set_natives_impl(self, natives):
+        theta1 = natives[0]
+        theta2 = natives[1]
+        
+        counts1 = angle_to_count(theta1, MIN_US_A, MIN_ANGLE_RAD_A, MAX_US_A, MAX_ANGLE_RAD_A)
+        counts2 = angle_to_count(theta2, MIN_US_B, MIN_ANGLE_RAD_B, MAX_US_B, MAX_ANGLE_RAD_B)
+
+        if self.maestro is not None:
+            self.maestro.set_target(0, counts1)
+            self.maestro.set_target(1, counts2)
+
 
 def build_cheap_drawbot(**kwargs):
     drawbot_kinematics = CheapDrawBotKinematics(**kwargs)
