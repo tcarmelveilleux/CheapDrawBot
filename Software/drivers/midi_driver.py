@@ -16,26 +16,18 @@ import mido
 import threading
 import Queue
 
-"""
-from __future__ import print_function
-import sys
-import mido
 
-if len(sys.argv) > 1:
-    portname = sys.argv[1]
-else:
-    portname = None  # Use default port
+def test_midi(portname):
+    try:
+        with mido.open_input(portname) as port:
+            print('Using {}'.format(port))
+            print('Waiting for messages...')
+            for message in port:
+                print('Received {}'.format(message))
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
 
-try:
-    with mido.open_input(portname) as port:
-        print('Using {}'.format(port))
-        print('Waiting for messages...')
-        for message in port:
-            print('Received {}'.format(message))
-            sys.stdout.flush()
-except KeyboardInterrupt:
-    pass
-"""
 class MidiRobotDriver(object):
     """
     Uses Mido to read events
@@ -95,7 +87,7 @@ class MidiRobotDriver(object):
             if value != self.last_values[control]:
                 self.last_values[control] = value
                 if axis_config["centered"]:
-                    event_value = (float(value) - 64.0) / 127.0
+                    event_value = (float(value) - 63.0) / 64.0
                 else:
                     event_value = float(value) / 127.0
 
@@ -115,6 +107,10 @@ class MidiRobotDriver(object):
 if __name__ == '__main__':
     def event_handler(event):
         print(event)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        test_midi(None if len(sys.argv) < 3 else sys.argv[2])
+        sys.exit(0)
 
     driver = None
     try:
