@@ -60,16 +60,6 @@ def find_highest_y(candidates):
     return candidates[idx]
 
 
-def pen_up(maestro):
-    maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_UP_US * COUNTS_PER_US))
-    time.sleep(0.3)
-
-
-def pen_down(maestro):
-    maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_DOWN_US * COUNTS_PER_US))
-    time.sleep(0.3)
-
-
 class CheapDrawBotKinematics(DrawbotKinematics):
     def __init__(self, *args, **kwargs):
         super(CheapDrawBotKinematics, self).__init__(*args, **kwargs)
@@ -206,7 +196,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         all_angles = []
         for x, y in segment_points:
             try:
-                # Find ik
+                # Find IK
                 pe = (x, y)
                 theta1, theta2, cx, cy = self.inverse_kine(pe)
                 all_angles.append((theta1, theta2))
@@ -214,9 +204,6 @@ class CheapDrawBotKinematics(DrawbotKinematics):
                 pass
 
         return np.asarray(segment_points, dtype="float64"), np.asarray(all_angles, dtype="float64")
-
-    def local_coord_from_hpgl(self, p):
-        return ((p[0] * 25e-3) + self.pa[0], (p[1] * 25e-3) + self.pa[1])
 
     def get_work_area(self, min_angle=pi / 16.0, max_angle=15.0 * pi / 16.0, ang_resolution=0.05, xy_resolution=0.5,
                       **kwargs):

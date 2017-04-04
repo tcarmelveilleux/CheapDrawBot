@@ -18,14 +18,14 @@ else:
     import tkinter as Tk
     from tkinter import ttk
 
+import tkFileDialog
+import tkMessageBox
+
 class ActivityParam(object):
-    def __init__(self, name, desc, min_val, max_val, value, fmt):
+    def __init__(self, name, desc, value, **kwargs):
         self._name = name
         self._desc = desc
-        self._min_val = min_val
-        self._max_val = max_val
         self._value = value
-        self._fmt = fmt
 
     @property
     def name(self):
@@ -34,6 +34,25 @@ class ActivityParam(object):
     @property
     def desc(self):
         return self._desc
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, the_value):
+        self._value = the_value
+
+    def __str__(self):
+        return str(self._value)
+
+
+class NumericalActivityParam(ActivityParam):
+    def __init__(self, name, desc, value, min_val, max_val, fmt, **kwargs):
+        super(NumericalActivityParam, self).__init__(name, desc, value, **kwargs)
+        self._min_val = min_val
+        self._max_val = max_val
+        self._fmt = fmt
 
     @property
     def min_val(self):
@@ -67,6 +86,23 @@ class ActivityParam(object):
     def __str__(self):
         return self._fmt % self._value
 
+class FilenameActivityParam(ActivityParam):
+    def __init__(self, name, desc, value, filetypes, is_save=False, **kwargs):
+        super(FilenameActivityParam, self).__init__(name, desc, value, **kwargs)
+        self._filetypes = filetypes
+        self._is_save = is_save
+
+    @property
+    def filetypes(self):
+        return self._filetypes
+
+    @property
+    def is_save(self):
+        return self._is_save
+
+class ButtonActivityParam(ActivityParam):
+    def __init__(self, name, desc, value, **kwargs):
+        super(ButtonActivityParam, self).__init__(name, desc, value, **kwargs)
 
 class Activity(object):
     def __init__(self, parent, drawbot, *args, **kwargs):
@@ -95,6 +131,11 @@ class Activity(object):
         :param event_dict: Dict containing event data. Only mandatory key is event name: {"event": "event_name_here", ... }
         :return: True if event was handled, false otherwise (good to determine if parent processed while in a child event handler)
         """
+        event_type = event_dict.get("event", "")
+        if event_type == "error":
+            self._show_error(message=event_dict.get("message", "ERROR!"), title=event_dict.get("title", "Error..."))
+            return True
+
         return False
 
     def num_var_changed(self, num_var, str_var, param):
@@ -124,6 +165,9 @@ class Activity(object):
     def get_param(self, name):
         return self._params[name]
 
+    def _show_error(self, message, title="Error"):
+        tkMessageBox.showerror(title, message)
+
     def _make_entry(self, parent, caption, width=None, **options):
         ttk.Label(parent, text=caption).pack(side=Tk.LEFT)
         entry = ttk.Entry(parent, **options)
@@ -132,7 +176,7 @@ class Activity(object):
         entry.pack(side=Tk.LEFT)
         return entry
 
-    def _gen_param_ctrl(self, master, param):
+    def _gen_numerical_param_ctrl(self, master, param):
         param_frame = ttk.Frame(master=master)
         str_var = Tk.StringVar(master=param_frame, value=str(param))
         if isinstance(param.value, int):
@@ -153,6 +197,49 @@ class Activity(object):
         param_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1, pady=5)
         return param_frame
 
+    def _handle_browse_button(self, str_var, param):
+        if not param.is_save:
+            filename = tkFileDialog.askopenfilename(filetypes=param.filetypes, title="Open '%s' file..." % param.desc)
+        else:
+            filename = tkFileDialog.asksaveasfilename(filetypes=param.filetypes,
+                                                      title="Select filename to save '%s' file..." % param.desc)
+
+        if len(filename) > 0:
+            param.value = filename
+            str_var.set(filename)
+            self.handle_event({"event": "param_changed", "param": param})
+
+    def _gen_filename_param_ctrl(self, master, param):
+        param_frame = ttk.Frame(master=master)
+        str_var = Tk.StringVar(master=param_frame, value=str(param))
+        label = ttk.Label(param_frame, text="%s:" % param.desc)
+
+        label.pack(side=Tk.LEFT)
+        entry = ttk.Entry(param_frame, textvariable=str_var)
+
+        entry.pack(side=Tk.LEFT, fill=Tk.X, expand=1, padx=5)
+
+        # When filename test entry is updated, update value of variable
+        def update_param_from_string(param, str_var):
+            param.value = str_var.get()
+
+        str_var.trace_variable("w", lambda *args: update_param_from_string(param, str_var))
+
+        browse_button = ttk.Button(param_frame, text="Browse...", command = lambda: self._handle_browse_button(str_var, param))
+        browse_button.pack(side=Tk.LEFT, padx=5)
+
+        param_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1, pady=5)
+        return param_frame
+
+    def _gen_button_param_ctrl(self, master, param):
+        param_frame = ttk.Frame(master=master)
+
+        param_button = ttk.Button(param_frame, text=param.desc, command=lambda: self.handle_event({"event": "param_changed", "param": param}))
+        param_button.pack(side=Tk.LEFT, padx=5)
+
+        param_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1, pady=5)
+        return param_frame
+
     def make_activity_panel(self, master):
         """
         Generate frame containing all controls for activity. Default panel includes slider controls for
@@ -163,7 +250,13 @@ class Activity(object):
         """
         self._param_frame = ttk.Frame(master=master)
         for name, param in self._params.items():
-            self._param_ctrls[name] = self._gen_param_ctrl(self._param_frame, param)
+            if isinstance(param, NumericalActivityParam):
+                self._param_ctrls[name] = self._gen_numerical_param_ctrl(self._param_frame, param)
+            elif isinstance(param, FilenameActivityParam):
+                self._param_ctrls[name] = self._gen_filename_param_ctrl(self._param_frame, param)
+            elif isinstance(param, ButtonActivityParam):
+                self._param_ctrls[name] = self._gen_button_param_ctrl(self._param_frame, param)
+
         self._param_frame.pack(side=Tk.TOP, fill=Tk.X)
         return self._param_frame
 

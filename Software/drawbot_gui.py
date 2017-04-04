@@ -21,6 +21,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.backend_bases import key_press_handler
 import matplotlib.pyplot as plt
 from activities.spirograph import SpirographActivity
+from activities.draw_hpgl import DrawHpglActivity
 from drivers.cheapdrawbot import build_cheap_drawbot
 
 from matplotlib.figure import Figure
@@ -129,14 +130,15 @@ class RobotControlFrame(object):
             activity_frame = activity.make_activity_panel(master=self._oper_notebook)
             self._oper_notebook.add(activity_frame, text=activity.name)
 
-        # HPGL
-        self._hpgl_param_frame = ttk.Frame(master=self._oper_notebook)
-        Tk.Label(self._hpgl_param_frame, text="hpgl").pack(side=Tk.TOP)
-        self._hpgl_param_frame.pack(side=Tk.TOP, fill=Tk.X)
-
-        self._oper_notebook.add(self._hpgl_param_frame, text="HPGL")
+        # # HPGL
+        # self._hpgl_param_frame = ttk.Frame(master=self._oper_notebook)
+        # Tk.Label(self._hpgl_param_frame, text="hpgl").pack(side=Tk.TOP)
+        # self._hpgl_param_frame.pack(side=Tk.TOP, fill=Tk.X)
+        #
+        # self._oper_notebook.add(self._hpgl_param_frame, text="HPGL")
 
         self._oper_notebook.pack(side=Tk.TOP, fill=Tk.X)
+        self._oper_notebook.bind("<<NotebookTabChanged>>", self.on_activity_changed)
 
         # Draw button
         self._draw_button = Tk.Button(master=self._frame, text="Draw!", command=lambda: self.handle_event({"event": "drawbot_go"}))
@@ -153,6 +155,17 @@ class RobotControlFrame(object):
             getattr(self, callback_name)(event_dict)
         else:
             self._logger.warn("Could not process event: %s", event_dict)
+
+    def on_activity_changed(self, event):
+        notebook = self._oper_notebook
+        activity_idx = notebook.index(notebook.select())
+        self._logger.info("%s", repr(activity_idx))
+        self._current_activity = self._activities[activity_idx]
+        self._logger.info("Selected activity %s", self._current_activity.name)
+
+        # Force refresh of activity
+        with self._data_lock:
+            self._activity_updated = True
 
     def on_activity_updated(self, event_dict):
         with self._data_lock:
@@ -175,6 +188,7 @@ class RobotControlFrame(object):
                 self._activity_updated = False
 
         if need_update:
+            self._logger.info("Activity needs update")
             self._current_activity.update_geometry()
             ax = self._pos_xy_axis
             ax.clear()
@@ -212,11 +226,13 @@ class DrawbotApp(object):
 
         # TODO: Support multiple robots!
         drawbot = build_cheap_drawbot()
-        drawbot.connect()
+        #drawbot.connect()
 
         activities = []
         spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)
         activities.append(spirograph_activity)
+        hpgl_activity = DrawHpglActivity(parent=self, drawbot=drawbot)
+        activities.append(hpgl_activity)
 
         self.robot_control_frame = RobotControlFrame(self.frame, drawbot, activities)
 
