@@ -14,6 +14,7 @@ from collections import OrderedDict
 from chiplotle.tools.io import import_hpgl_file
 from chiplotle.hpgl.commands import PD, PU
 from activity import Activity, FilenameActivityParam, ButtonActivityParam, NumericalActivityParam
+from utils.geometry import *
 
 class DrawHpglActivity(Activity):
     def __init__(self, parent, drawbot, *args, **kwargs):
@@ -21,13 +22,21 @@ class DrawHpglActivity(Activity):
         self._name = "HPGL"
         self._filename = "Funstuff.hpgl"
         self._param_ctrls = {}
-        self._params = OrderedDict(
-            (("hpgl_filename", FilenameActivityParam(name="hpgl_filename", desc="HPGL file to plot",
+
+        _, _, work_path = drawbot.kine.get_work_area(save_cache=True)
+        cx, cy, _, _, _, _, _, _ = centroid_extents(work_path)
+
+        self._params = OrderedDict((
+            ("hpgl_filename", FilenameActivityParam(name="hpgl_filename", desc="HPGL file to plot",
                                                    value=self._filename, is_save=False, filetypes=[("HPGL Files", "*.hpgl")])),
             ("load_file", ButtonActivityParam(name="load_file", desc="Load HPGL file", value="load_file")),
-            ("tx", NumericalActivityParam(name="tx", desc="X translation (mm)", value=0.0, fmt="%.1f", min_val=-100.0, max_val=100.0)),
-            ("ty", NumericalActivityParam(name="ty", desc="Y translation (mm)", value=0.0, fmt="%.1f", min_val=-100.0, max_val=100.0)))
-        )
+            ("tx", NumericalActivityParam(name="tx", desc="X translation (mm)", value=cx, fmt="%.1f", min_val=cx-100.0, max_val=cx+100.0)),
+            ("ty", NumericalActivityParam(name="ty", desc="Y translation (mm)", value=cy, fmt="%.1f", min_val=cy-100.0, max_val=cy+100.0)),
+            ("k", NumericalActivityParam(name="k", desc="Scale", value=1.0, fmt="%.3f", min_val=0.1,
+                                           max_val=3.0)),
+            ("theta", NumericalActivityParam(name="theta", desc="Rotation (deg)", value=0.0, fmt="%.1f", min_val=-180.0,
+                                         max_val=180.0))
+        ))
         self._paths = []
         self._transformed_paths = []
         self._program = []
@@ -53,8 +62,8 @@ class DrawHpglActivity(Activity):
                 self._logger.info("Trying to load %s", filename)
                 self._parent.handle_event({"event": "activity_updated"})
                 return True
-            elif param.name in ("tx", "ty"):
-                # Update activity on translation change
+            elif param.name in ("k", "tx", "ty", "theta"):
+                # Update activity on other parameter changed
                 self._parent.handle_event({"event": "activity_updated"})
 
         return False
@@ -72,12 +81,12 @@ class DrawHpglActivity(Activity):
             self.handle_event(error_event)
             return
 
-
+        # Accumulate paths from Pen-UP (PU) and Pen-DOWN (PD) sequences
         accumulated_paths = []
         current_path = []
         for command in hpgl_data:
             if isinstance(command, PU):
-                if len(current_path) > 0:
+                if len(current_path) > 1:
                     accumulated_paths.append(np.asarray(current_path, dtype="float64"))
                     current_path = []
 
@@ -87,7 +96,7 @@ class DrawHpglActivity(Activity):
                     current_path.append(hpgl2mm(coord.x, coord.y))
 
         # Flush last path if no pen up
-        if len(current_path) > 0:
+        if len(current_path) > 1:
             accumulated_paths.append(np.asarray(current_path, dtype="float64"))
 
         self._paths = accumulated_paths
@@ -95,10 +104,30 @@ class DrawHpglActivity(Activity):
     # TODO: Replace with a global helper!
     def _update_transformed_paths(self):
         self._transformed_paths = []
+
+        # Find center and bounding box of vector graphics
+        cx, cy, width, height, min_x, max_x, min_y, max_y = centroid_extents(self._paths)
+        center = np.asarray(((min_x + max_x) / 2.0, (min_y + max_y) / 2.0), float)
+
+        self._logger.info("cx: %.3f cy:%.3f minx: %.3f, maxx: %.3f, miny: %.3f, maxy: %.3f", cx, cy, min_x, max_x, min_y, max_y)
+
+        # Apply:
+        # 1- translate to origin
+        # 2- Scale
+        # 3- Rotate around origin
+        # 4- Translate to translation
+
         tx = self._params["tx"].value
         ty = self._params["ty"].value
+
+        to_origin = get_translation_2d(-center)
+        scaling = get_scale_2d(self._params["k"].value)
+        rotation = get_rotation_2d(theta=np.deg2rad(self._params["theta"].value))
+        to_destination = get_translation_2d((tx, ty))
+        total_transform = np.dot(to_destination, np.dot(rotation, np.dot(scaling, to_origin)))
+
         for path in self._paths:
-            self._transformed_paths.append(path + np.asarray((tx, ty)))
+            self._transformed_paths.append(apply_transform_2d(path, total_transform))
 
     def draw_preview(self, ax):
         self._update_transformed_paths()

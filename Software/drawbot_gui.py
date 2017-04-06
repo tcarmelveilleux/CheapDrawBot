@@ -102,7 +102,7 @@ class RobotControlFrame(object):
         self._title_label.pack(side="top")
 
         # Figures for plots
-        self._pos_figure = Figure(figsize=(8, 4), dpi=100)
+        self._pos_figure = Figure(figsize=(8, 3), dpi=100)
         self._pos_xy_axis = self._pos_figure.add_subplot(121)
         self._pos_polar_axis = self._pos_figure.add_subplot(122)
 
@@ -128,6 +128,7 @@ class RobotControlFrame(object):
 
         for activity in activities:
             activity_frame = activity.make_activity_panel(master=self._oper_notebook)
+            activity_frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=0)
             self._oper_notebook.add(activity_frame, text=activity.name)
 
         # # HPGL
@@ -137,15 +138,16 @@ class RobotControlFrame(object):
         #
         # self._oper_notebook.add(self._hpgl_param_frame, text="HPGL")
 
-        self._oper_notebook.pack(side=Tk.TOP, fill=Tk.X)
+        self._oper_notebook.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=0)
         self._oper_notebook.bind("<<NotebookTabChanged>>", self.on_activity_changed)
 
         # Draw button
         self._draw_button = Tk.Button(master=self._frame, text="Draw!", command=lambda: self.handle_event({"event": "drawbot_go"}))
-        self._draw_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH)
+        self._draw_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=0)
 
         ##################
 
+        self._frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=2)
         # Bootstrap timer update
         self._frame.after(100, self.on_timer)
 
@@ -222,11 +224,13 @@ class RobotControlFrame(object):
 class DrawbotApp(object):
     def __init__(self, master=None, **kwargs):
         self.frame = ttk.Frame(master)
-        self.frame.pack()
 
         # TODO: Support multiple robots!
-        drawbot = build_cheap_drawbot()
-        #drawbot.connect()
+        drawbot = build_cheap_drawbot(serial_device="COM27")
+        try:
+            drawbot.connect()
+        except:
+            print("Could not connect to robot!")
 
         activities = []
         spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)
@@ -235,6 +239,7 @@ class DrawbotApp(object):
         activities.append(hpgl_activity)
 
         self.robot_control_frame = RobotControlFrame(self.frame, drawbot, activities)
+        self.frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
 
         # Init HMI driver if requested
         self.hmi_driver = None
