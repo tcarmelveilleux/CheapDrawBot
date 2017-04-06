@@ -11,6 +11,8 @@ Copyright 2017, Tennessee Carmel-Veilleux.
 from __future__ import print_function
 from numpy import sqrt, pi, sin, cos, floor
 from numpy import arctan2 as atan2
+import numpy as np
+from collections import Sequence
 
 def get_intersection_2circ(p0, r0, p1, r1):
     p0x, p0y = tuple(p0)
@@ -58,7 +60,7 @@ def get_circ_center_2pts_r(p1, p2, r):
     if r == 0.0:
         raise ValueError('No solution due to no radius')
 
-    (x1, y1), (x2, y2) = p1, p2
+    (x1, y1), (x2, y2) = tuple(p1), tuple(p2)
 
     if p1 == p2:
         raise ValueError('Infinite numbre of solutions')
@@ -97,37 +99,62 @@ def get_circ_center_2pts_r(p1, p2, r):
 
 def centroid_extents(all_xy):
     """
-    Find the centroid and bounding box of a cloud of points
+    Find the centroid and bounding box of a list of cloud of points
 
-    :param all_xy: List of (x,y) pairs
+    :param all_xy: List of arrays Nx2 (x,y) pairs
 
     :return: tuple (cx, cy, width, height, min_x, max_x, min_y, max_y) of centroid/bounding box
     """
     if len(all_xy) == 0:
         raise ValueError("Cannot find extents of nothing !")
 
-    min_x = all_xy[0][0]
-    max_x = all_xy[0][0]
-    min_y = all_xy[0][1]
-    max_y = all_xy[0][1]
+    if not isinstance(all_xy, Sequence):
+        all_xy = [all_xy]
+
+    if len(all_xy[0].shape) == 1:
+        min_x = all_xy[0][0]
+        max_x = all_xy[0][0]
+        min_y = all_xy[0][1]
+        max_y = all_xy[0][1]
+    else:
+        min_x = all_xy[0][0,0]
+        max_x = all_xy[0][0,0]
+        min_y = all_xy[0][0,1]
+        max_y = all_xy[0][0,1]
+
     cx = 0.0
     cy = 0.0
+    num_x = 0
+    num_y = 0
 
-    for x, y in all_xy:
-        if x < min_x:
-            min_x = x
-        if x > max_x:
-            max_x = x
-        if y < min_y:
-            min_y = y
-        if y > max_y:
-            max_y = y
+    for group in all_xy:
+        if isinstance(group, Sequence):
+            group = np.asarray(group, float)
 
-        cx += x
-        cy += y
+        if len(group.shape) == 1:
+            # Handle input being a list of one-dimensional, 2-element arrays
+            min_x = min(min_x, group[0])
+            max_x = max(max_x, group[0])
+            min_y = min(min_y, group[1])
+            max_y = max(max_y, group[1])
 
-    cx /= len(all_xy)
-    cy /= len(all_xy)
+            cx += group[0]
+            cy += group[1]
+            num_x += 1
+            num_y += 1
+        else:
+            min_x = min(min_x, np.amin(group[:, 0]))
+            max_x = max(max_x, np.amax(group[:, 0]))
+            min_y = min(min_y, np.amin(group[:, 1]))
+            max_y = max(max_y, np.amax(group[:, 1]))
+
+            cx += np.sum(group[:, 0])
+            cy += np.sum(group[:, 1])
+            num_x += np.alen(group[:, 0])
+            num_y += np.alen(group[:, 1])
+
+    cx /= num_x
+    cy /= num_y
     width = max_x - min_x
     height = max_y - min_y
 
@@ -200,7 +227,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
 
     # Find point closest to tip of segment at 0, it becomes our actual starting point
     min_idx, min_dist, _ = find_closest_point(centered_all_xy, start_point)
-    start_point = all_xy[min_idx]
+    start_point = tuple(all_xy[min_idx])
 
     print("Starting point: %s" % repr(start_point))
 
@@ -218,6 +245,8 @@ def concave_hull_wheel(all_xy, wheel_radius):
 
         candidates = sorted_by_manhattan_distance(all_xy, last_point, within=(4.0 * wheel_radius))
         for idx, candidate in enumerate(candidates):
+            candidate = tuple(candidate)
+
             # Skip last point (starting point of current circle)
             if candidate == last_point:
                 continue
@@ -273,7 +302,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
             raise ValueError("Computation diverged and no candidate was found. Should not happen!")
 
         # Got through all the points. New outline point is on concave hull
-        outline_point = candidates[min_idx]
+        outline_point = tuple(candidates[min_idx])
         print("Found outline point (%.2f, %.2f)" % (outline_point[0], outline_point[1]))
         if outline_point in outline_points:
             # Got back to start, we're done!
@@ -285,7 +314,7 @@ def concave_hull_wheel(all_xy, wheel_radius):
             outline_points.append(outline_point)
             last_point = outline_point
 
-    return outline_points, circle_centers
+    return np.asarray(outline_points, dtype="float64"), np.asarray(circle_centers, dtype="float64")
 
 
 def split_line_into_segments(p1, p2, seg_length):
@@ -308,3 +337,58 @@ def split_line_into_segments(p1, p2, seg_length):
     segments.append((p2x, p2y))
 
     return segments
+
+
+def get_scale_2d(scale):
+    """
+    Generate a 2D homogenous coordinates transformation matrix for scaling
+
+    :param scale: a scalar of the scale factor to apply: < 1.0 shrinks, > 1.0 grows, 1.0 is identity
+    :return: A 3x3 transformation matrix applying the given scaling
+    """
+    return np.array([[scale, 0.0, 0.0],
+                     [0.0, scale, 0.0],
+                     [0.0, 0.0, 1.0]])
+
+def get_translation_2d(translation):
+    """
+    Generate a 2D homogenous coordinates transformation matrix for a translation
+
+    :param translation: (x,y) pair of translation coordinates
+    :return: A 3x3 transformation matrix applying the given translation
+    """
+    return np.array([[1.0, 0.0, translation[0]],
+                     [0.0, 1.0, translation[1]],
+                     [0.0, 0.0, 1.0]])
+
+def get_rotation_2d(theta, around=(0.0, 0.0)):
+    """
+    Generate a 2D homogenous coordinates transformation matrix for a rotation around a point
+
+    :param theta: Rotation angle in radians (positive == CCW)
+    :param around: Point around which to affect the center of rotation (default (0, 0))
+    :return: A 3x3 transformation matrix applying the given rotation
+    """
+    return np.array([[cos(theta), -sin(theta), around[0] * (1.0 - cos(theta)) + (around[1] * sin(theta))],
+                     [sin(theta), cos(theta), around[1] * (1.0 - cos(theta)) - (around[0] * sin(theta))],
+                     [0.0, 0.0, 1.0]])
+
+def apply_transform_2d(points, transform):
+    """
+    Apply a 2D tranformation matrix (3x3 with input points as column vectors convention) to an array of 2D points.
+    2D points must be an array of 2D row vectors: lines are the points (x,y).
+
+    :param points: Array of row vectors of 2D points to transform
+    :param transform: 3x3 transformation matrix to apply
+    :return: Transformed array of row vectors
+    """
+    # Augment with a column of 1s, transport to column vectors of points
+    augmented_points = np.column_stack((points, np.ones((points.shape[0], 1)))).transpose()
+
+    # 3x3 * 3xn = 3xn -> transpose to row vectors of points, remove augmentation
+    transformed = np.dot(transform, augmented_points).transpose()[:, 0:2]
+
+    return transformed
+
+def list_of_tuples(a_2d_array):
+    return [tuple(row) for row in a_2d_array]

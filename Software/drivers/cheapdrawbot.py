@@ -141,7 +141,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         if not self.respects_external_constraints((pex, pey), (theta1, theta2)):
             raise ValueError("No solution found for forward kine")
 
-        return (pex, pey, phi1, phi2, cx, cy)
+        return np.asarray((pex, pey, phi1, phi2, cx, cy), float)
 
     def inverse_kine(self, end_point, **kwargs):
         # pe: Point of end effector (x, y) for which to find the theta1/theta2
@@ -176,8 +176,8 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         theta1 = atan2((ciray - pay), (cirax - pax))
         theta2 = atan2((cirby - pby), (cirbx - pbx))
 
-        if self.respects_external_constraints((pex, pey), (theta1, theta2)):
-            return (theta1, theta2, cx, cy)
+        if self.respects_external_constraints(np.asarray((pex, pey)), np.asarray((theta1, theta2))):
+            return np.asarray((theta1, theta2, cx, cy), float)
         else:
             raise ValueError("No reverse kine solution found")
 
@@ -219,7 +219,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         for theta1 in arange(max_angle, min_angle, -ang_resolution):
             for theta2 in arange(min_angle, max_angle, ang_resolution):
                 try:
-                    pex, pey, phi1, phi2, cx, cy = self.forward_kine((theta1, theta2))
+                    pex, pey, phi1, phi2, cx, cy = tuple(self.forward_kine((theta1, theta2)))
                     work_natives.append((theta1, theta2))
                     work_points.append((pex, pey))
                 except:
@@ -248,16 +248,19 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         for pey in arange(min_y, max_y, xy_resolution):
             for pex in arange(min_x, max_x, xy_resolution):
                 try:
-                    theta1, theta2, cx, cy = self.inverse_kine((pex, pey))
-                    work_natives.append((theta1, theta2))
-                    work_points.append((pex, pey))
+                    ik = self.inverse_kine((pex, pey))
+                    theta1, theta2, cx, cy = tuple(ik)
+                    work_natives.append(np.asarray((theta1, theta2), float))
+                    work_points.append(np.asarray((pex, pey), float))
                 except:
                     # No solution founds
                     pass
 
         wheel_radius = xy_resolution * 2.0
         work_path, circle_centers = concave_hull_wheel(work_points, wheel_radius)
-        self.work_area_config["work_path"] = work_path
+        self.work_area_config["work_path"] = list_of_tuples(work_path)
+        self.work_area_config["work_points"] = list_of_tuples(work_points)
+        self.work_area_config["work_natives"] = list_of_tuples(work_natives)
         cx, cy, width, height, min_x, max_x, min_y, max_y = centroid_extents(work_path[:-1])
         self.work_area_config["work_centroid"] = [cx, cy]
 

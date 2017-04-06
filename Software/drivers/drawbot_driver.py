@@ -263,25 +263,36 @@ class DrawbotKinematics(object):
 
     def forward_kine(self, thetas, **kwargs):
         # Position of end-effector
-        end_point = (0.0, 0.0)
+        end_points = np.zeros(thetas.shape)
 
-        # dict of random bits to return from forward kinematics geometry
-        internal_stuff = { "phi1": 0.0, "phi2": 0.0, "cx": 0.0, "cy": 0.0}
+        # Other columns (e.g. phi1, phi2, cx, cy), stacked at the end of the end_points. Could be as many columns as you want
+        internal_stuff = np.zeros((thetas.shape[0], 4))
 
-        return end_point, internal_stuff
+        return np.column_stack((end_points, internal_stuff))
 
-    def inverse_kine(self, end_point, **kwargs):
-        # end_point: Point of end effector (x, y) for which to find the theta1/theta2
+    def inverse_kine(self, end_points, **kwargs):
+        # end_points: array of points of end effector (x, y) for which to find the natives
+        natives = np.zeros(end_points.shape)
 
-        thetas = (0.0, 0.0)
+        # Other columns (e.g. phi1, phi2, cx, cy), stacked at the end of the end_points. Could be as many columns as you want
+        internal_stuff = np.zeros((end_points.shape[0], 4))
 
-        # dict of random bits to return from forward kinematics geometry
-        internal_stuff = {"phi1": 0.0, "phi2": 0.0, "cx": 0.0, "cy": 0.0}
-
-        if self.respects_external_constraints(end_point, thetas):
-            return thetas, internal_stuff
+        if self.respects_external_constraints(end_points, natives):
+            return np.column_stack((natives, internal_stuff))
         else:
             raise ValueError("No reverse kine solution found")
+
+    # Return an array of only the points that fit the IK of the robot
+    def trim_unfeasible(self, points):
+        feasible_points = []
+        for point in points:
+            try:
+                self.inverse_kine(point)
+                feasible_points.append(points)
+            except ValueError:
+                feasible_points.append(point)
+
+        return np.asarray(feasible_points)
 
     def get_work_area(self, spatial_res_mm=0.5, theta_res_rad=0.05, **kwargs):
         # Samples of the work area
