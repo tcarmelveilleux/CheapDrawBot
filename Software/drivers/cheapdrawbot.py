@@ -309,16 +309,26 @@ class CheapDrawBotKinematics(DrawbotKinematics):
 class CheapDrawbot(DrawbotDriver):
     def __init__(self, drawbot_kinematics, *args, **kwargs):
         super(CheapDrawbot, self).__init__(drawbot_kinematics, *args, **kwargs)
-        self.serial_device = kwargs.get("serial_device", "COM6")
-        self.maestro = None        
+        self.maestro = None
         
-    def connect_impl(self):
-        self.maestro = pololu_maestro.PololuMaestro(self.serial_device)
+    def connect_impl(self, port_id):
+        self.maestro = pololu_maestro.PololuMaestro(port_id)
         self.maestro.connect()
-        
+
     def disconnect_impl(self):
         if self.maestro is not None:
             self.maestro.close()
+
+    def get_port_list_impl(self):
+        import serial.tools.list_ports
+
+        port_list = []
+
+        # Build list of available COM ports
+        for port in sorted(serial.tools.list_ports.comports()):
+            port_list.append({"port_id": port.device, "description": port.description})
+
+        return port_list
 
     def set_pen_height_impl(self, height_mm):
         if height_mm > 0.1:

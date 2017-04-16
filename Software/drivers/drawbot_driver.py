@@ -109,20 +109,36 @@ class DrawbotDriver(object):
     def kine(self):
         return self._drawbot_kine
 
-    def connect(self, **kwargs):
+    def connect(self, port_id, **kwargs):
         if self._connected:
             self._logger.warn("Already connected, ignoring!")
             return
 
         if not self._thread.is_alive():
             self._running = True
-            self.connect_impl()
+            self.connect_impl(port_id)
             self._thread.start()
             
 
     def disconnect(self):
         if not self._connected:
             pass
+
+    def get_port_list(self):
+        """
+        Get all available ports for this robot. Each port is a dict of the format
+
+        {"port_id": port_id_string, "description": description_string}
+
+        A port id is a string that, when given to connect(), would connect to a given robot.
+        For a serial-controlled robot, it would be a platform-specific serial device name.
+        For a complex USB interface robot, it could be some driver-specific value which the
+        driver can recognize and use to connect.
+
+        :return: a list of dicts as described above.
+        """
+        port_list = self.get_port_list_impl()
+        return sorted(port_list, key=lambda x: x.get("port_id"))
 
     def abort_path(self):
         self._queue.put(DrawbotAbort())
@@ -219,7 +235,10 @@ class DrawbotDriver(object):
         else:
             self._logger.warn("Unknown command: %s", drawing_cmd)
 
-    def connect_impl(self):
+    def get_port_list_impl(self):
+        raise NotImplementedError()
+
+    def connect_impl(self, port_id):
         raise NotImplementedError()
 
     def disconnect_impl(self):
@@ -230,6 +249,7 @@ class DrawbotDriver(object):
 
     def set_natives_impl(self, natives):
         raise NotImplementedError()
+
 
 class DrawbotKinematics(object):
     """

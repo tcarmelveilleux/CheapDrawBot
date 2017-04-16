@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from activities.spirograph import SpirographActivity
 from activities.draw_hpgl import DrawHpglActivity
 from drivers.cheapdrawbot import build_cheap_drawbot
+from version import VERSION
 
 from matplotlib.figure import Figure
 import sys
@@ -55,29 +56,42 @@ class RobotController(object):
 
             print(event)
 
+class RobotDriverFrame(object):
+    def __init__(self, parent, master, drawbot, **kwargs):
+        self._parent = parent
+        self._drawbot = drawbot
 
-#root = Tk.Tk()
-#root.wm_title("Embedding in TK")
+        self._frame = ttk.LabelFrame(master=master, text="Drawbot")
 
+        # TODO: Add type
 
-#f = Figure(figsize=(5, 4), dpi=100)
-#a = f.add_subplot(111)
-#t = arange(0.0, 3.0, 0.01)
-#s = sin(2*pi*t)
+        self._port_frame = ttk.Frame(master=self._frame)
+        self._port_label = ttk.Label(master=self._port_frame, text="Port:")
+        self._port_label.pack(side=Tk.LEFT)
 
-#a.plot(t, s)
-#
-# def _quit():
-#     root.quit()     # stops mainloop
-#     root.destroy()  # this is necessary on Windows to prevent
-#                     # Fatal Python Error: PyEval_RestoreThread: NULL tstate
-#
-# button = Tk.Button(master=root, text='Quit', command=_quit)
-# button.pack(side=Tk.BOTTOM)
+        ports = drawbot.get_port_list()
+        values = ["%(port_id)s, %(description)s" % port for port in ports]
+        self._port_entry = ttk.Combobox(master=self._port_frame, values=values)
+        self._port_entry.state(["readonly"])
 
-#Tk.mainloop()
-# If you put root.destroy() here, it will cause an error if
-# the window is closed with the window manager.
+        self._port_entry.pack(side=Tk.LEFT)
+        self._port_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+        self._connect_button = ttk.Button(master=self._frame, text="Connect")
+        self._connect_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+        self._disconnect_button = ttk.Button(master=self._frame, text='Disconnect')
+        self._disconnect_button.state(["disabled"])
+        self._disconnect_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+        # Draw button
+        self._draw_button = ttk.Button(master=self._frame, text="Draw!",
+                                      command=lambda: self._parent.handle_event({"event": "drawbot_go"}))
+        self._draw_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+    def pack(self, *args, **kwargs):
+        self._frame.pack(*args, **kwargs)
+
 
 class RobotControlFrame(object):
     def __init__(self, master, drawbot, activities, **kwargs):
@@ -98,8 +112,9 @@ class RobotControlFrame(object):
         self._frame = ttk.Frame(master)
         self._frame.pack()
 
-        self._title_label = ttk.Label(self._frame, text="Roboto")
-        self._title_label.pack(side="top")
+        self._top_frame = ttk.Frame(master=self._frame)
+
+        self._fig_frame = ttk.Frame(master=self._top_frame)
 
         # Figures for plots
         self._pos_figure = Figure(figsize=(8, 3), dpi=100)
@@ -107,18 +122,26 @@ class RobotControlFrame(object):
         self._pos_polar_axis = self._pos_figure.add_subplot(122)
 
         # Matplotlib canvas to show plots
-        self._canvas = FigureCanvasTkAgg(self._pos_figure, master=self._frame)
+        self._canvas = FigureCanvasTkAgg(self._pos_figure, master=self._fig_frame)
         self._canvas.show()
         self._canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
 
         # Matplotlib tools
-        self._toolbar_frame = ttk.Frame(master=self._frame)
+        self._toolbar_frame = ttk.Frame(master=self._fig_frame)
         self._toolbar = NavigationToolbar2TkAgg(self._canvas, self._toolbar_frame)
         self._toolbar.update()
 
         self._canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
         self._toolbar_frame.pack(side=Tk.TOP, fill=Tk.BOTH)
         self._canvas.mpl_connect('key_press_event', self.on_key_event)
+
+        self._fig_frame.pack(side=Tk.LEFT, fill=Tk.BOTH, expand=1)
+
+        # Robot driver frame
+        self._robot_driver_frame = RobotDriverFrame(parent=self, master=self._top_frame, drawbot=drawbot)
+        self._robot_driver_frame.pack(side=Tk.LEFT, padx=5)
+
+        self._top_frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
 
         # Parameters
         self._params = {}
@@ -140,10 +163,6 @@ class RobotControlFrame(object):
 
         self._oper_notebook.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=0)
         self._oper_notebook.bind("<<NotebookTabChanged>>", self.on_activity_changed)
-
-        # Draw button
-        self._draw_button = Tk.Button(master=self._frame, text="Draw!", command=lambda: self.handle_event({"event": "drawbot_go"}))
-        self._draw_button.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=0)
 
         ##################
 
@@ -292,7 +311,7 @@ def center(toplevel):
     h = toplevel.winfo_screenheight()
     size = tuple(int(_) for _ in toplevel.geometry().split('+')[0].split('x'))
     x = w/2 - size[0]/2
-    y = h/2 - size[1]/2
+    y = h/2 - size[1]/2 - 30
     toplevel.geometry("%dx%d+%d+%d" % (size + (x, y)))
 
 def _setup_logging():
@@ -305,6 +324,7 @@ def main():
     root = Tk.Tk()
     app = DrawbotApp(root) #, hmi_port="COM37")
     center(root)
+    root.title("Drawbot GUI v%s" % VERSION)
     root.mainloop()
 
 if __name__ == '__main__':
