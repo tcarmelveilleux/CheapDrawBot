@@ -26,7 +26,7 @@ MAX_US_A = 1018.75
 MAX_ANGLE_RAD_A = 3.0 * pi / 4.0
 B_OFFSET_US = -39.0
 
-PEN_UP_US = 1310.0
+PEN_UP_US = 1160.0
 PEN_DOWN_US = 1500.0
 PEN_UPDOWN_CHAN = 2
 COUNTS_PER_US = 4
@@ -80,6 +80,7 @@ class CheapDrawBotKinematics(DrawbotKinematics):
         # Min/max angles achievable by servos (referenced to pa/pa)
         self.min_theta = kwargs.get("min_theta", pi / 16.0)
         self.max_theta = kwargs.get("max_theta", 15.0 * pi / 16.0)
+        self.pen_z = 0.0
 
         self.load_work_area_config()
 
@@ -321,8 +322,10 @@ class CheapDrawbot(DrawbotDriver):
 
     def set_pen_height_impl(self, height_mm):
         if height_mm > 0.1:
+            self.pen_height_mm = height_mm
             self.maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_UP_US * COUNTS_PER_US))
         else:
+            self.pen_height_mm = height_mm
             self.maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_DOWN_US * COUNTS_PER_US))
         time.sleep(0.3)
 

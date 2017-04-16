@@ -169,8 +169,12 @@ class DrawHpglActivity(Activity):
             self._drawbot.pen_up()
             self._drawbot.goto((path[0, 0], path[0, 1]))
 
+            # HACK: When pen is up, add more pen-up delays as goto will cross a large portion of the work area
+            self._drawbot.pen_up()
+
             # Don't go down if up-point was only point
             if len(path) == 1:
+                self._logger.info("Single point path: %s", path)
                 continue
 
             # Draw entire path

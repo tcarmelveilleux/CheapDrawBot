@@ -48,7 +48,7 @@ class DrawbotPenGoto(DrawbotCommand):
 
     @property
     def position(self):
-        return self.position
+        return self._position
 
     @property
     def is_native(self):
@@ -80,7 +80,7 @@ class DrawbotDriver(object):
         self._connected = False
         # Hint for delay between point updates
         self._point_delay_sec = kwargs.get("point_delay_ms", 0.01)
-        self._pen_diameter_mm = kwargs.get("pen_diameter_mm", 0.5)
+        self._pen_diameter_mm = kwargs.get("pen_diameter_mm", 0.25)
         self._thread = threading.Thread(target=self._process, name=kwargs.get("thread_name", "drawbot_driver"))
         self._thread.daemon = kwargs.get("daemon", True)
         self._running = False
@@ -185,8 +185,23 @@ class DrawbotDriver(object):
                 self._drawing_prog.append({"cmd": "pen_up", "height_mm": cmd.height_mm})
             elif isinstance(cmd, DrawbotPenDown):
                 self._drawing_prog.append({"cmd": "pen_down", "height_mm": cmd.height_mm})
-            elif isinstance(cmd, DrawbotPenDown):
-                self._drawing_prog.append({"cmd": "pen_down", "height_mm": cmd.height_mm})
+            elif isinstance(cmd, DrawbotPenGoto):
+                is_native = cmd.is_native
+
+                # Convert to natives
+                if not is_native:
+                    try:
+                        # Find IK
+                        natives = self._drawbot_kine.inverse_kine(cmd.position)
+                        is_native = True
+                    except:
+                        self._logger.exception("Could not go ot native!")
+                        continue
+                else:
+                    natives = cmd.position
+
+                self._drawing_prog.append(
+                    {"cmd": ("goto_native" if is_native else "goto_point"), "point": natives})
             elif isinstance(cmd, DrawbotAbort):
                 self._drawing_prog.append({"cmd": "abort"})
 
