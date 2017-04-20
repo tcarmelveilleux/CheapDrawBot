@@ -63,7 +63,7 @@ class RobotDriverFrame(object):
         self._parent = parent
         self._drawbot = drawbot
 
-        self._frame = ttk.LabelFrame(master=master, text="Drawbot")
+        self._frame = ttk.LabelFrame(master=master, text="Drawbot", padding=5)
 
         # TODO: Add type
 
@@ -90,7 +90,13 @@ class RobotDriverFrame(object):
         self._disconnect_button.state(["disabled"])
         self._disconnect_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
 
+        spacer1 = ttk.Frame(master=self._frame)
+        spacer1.pack(side=Tk.TOP, pady=10)
+
         # Draw button
+        s = ttk.Style()
+        s.configure('prop.TLabel', font=('Courier', 12))
+
         self._start_button = ttk.Button(master=self._frame, text="Draw!",
                                       command=lambda: self._parent.handle_event({"event": "drawbot_start"}))
         self._start_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
@@ -99,6 +105,30 @@ class RobotDriverFrame(object):
                                        command=lambda: self._parent.handle_event({"event": "drawbot_stop"}))
         self._stop_button.state(["disabled"])
         self._stop_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+        spacer2 = ttk.Frame(master=self._frame)
+        spacer2.pack(side=Tk.TOP, pady=10)
+
+        # Location of robot
+        self._location_frame = ttk.Frame(master=self._frame)
+
+        ttk.Label(master=self._location_frame, text="X: ").grid(row=0, sticky=Tk.W)
+        ttk.Label(master=self._location_frame, text="Y: ").grid(row=1, sticky=Tk.W)
+        ttk.Label(master=self._location_frame, text="Z: ").grid(row=2, sticky=Tk.W)
+
+        self._x_var = Tk.StringVar("")
+        self._x_label = ttk.Label(master=self._location_frame, textvariable=self._x_var, width=-10, style="prop.TLabel")
+        self._x_label.grid(row=0, column=1, sticky=Tk.W)
+
+        self._y_var = Tk.StringVar("")
+        self._y_label = ttk.Label(master=self._location_frame, textvariable=self._y_var, width=-10, style="prop.TLabel")
+        self._y_label.grid(row=1, column=1, sticky=Tk.W)
+
+        self._z_var = Tk.StringVar("")
+        self._z_label = ttk.Label(master=self._location_frame, textvariable=self._z_var, width=-10, style="prop.TLabel")
+        self._z_label.grid(row=2, column=1, sticky=Tk.W)
+
+        self._location_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1)
 
     def _on_connect(self):
         if len(self._ports) == 0:
@@ -127,13 +157,17 @@ class RobotDriverFrame(object):
     def set_stop_enable(self, enabled):
         self._set_enable(self._stop_button, enabled=enabled)
 
+    def set_location(self, x, y, z, x_fmt="%7.1f", y_fmt="%7.1f", z_fmt="%7.1f"):
+        self._x_var.set(x_fmt % x)
+        self._y_var.set(y_fmt % y)
+        self._z_var.set(z_fmt % z)
+
     def pack(self, *args, **kwargs):
         self._frame.pack(*args, **kwargs)
 
 
 class RobotControlFrame(object):
     def __init__(self, master, drawbot, activities, **kwargs):
-        self._activity_updated = True
         self._drawbot = drawbot
         self._timer_interval_ms = 100
         self._logger = logging.getLogger("RobotControlFrame")
@@ -142,6 +176,14 @@ class RobotControlFrame(object):
 
         self._mode = "spirograph"
         self._data_lock = threading.Lock()
+
+        self._activity_updated = True
+
+        # Robot endpoint position
+        self._pos_updated = False
+        self._x = 0.0
+        self._y = 0.0
+        self._z = 0.0
 
         #######################
         s = ttk.Style()
@@ -177,7 +219,7 @@ class RobotControlFrame(object):
 
         # Robot driver frame
         self._robot_driver_frame = RobotDriverFrame(parent=self, master=self._top_frame, drawbot=drawbot)
-        self._robot_driver_frame.pack(side=Tk.LEFT, padx=5)
+        self._robot_driver_frame.pack(side=Tk.LEFT, padx=5, ipadx=5, ipady=5)
 
         self._top_frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
 
@@ -240,6 +282,16 @@ class RobotControlFrame(object):
         self._robot_driver_frame.set_start_enable(True)
         self._robot_driver_frame.set_stop_enable(False)
 
+    # Called by drawbot event loop in DrawbotDriver thread context because we are observer.
+    # MAKE SURE TO KEEP SHORT-RUNNING
+    def on_drawbot_event(self, drawbot_event):
+        if drawbot_event["event"] == "drawbot_position":
+            with self._data_lock:
+                self._pos_updated = True
+                self._x = drawbot_event["x"]
+                self._y = drawbot_event["y"]
+                self._z = drawbot_event["z"]
+
     def on_connect(self, event_dict):
         port_id = event_dict["port_id"]
         self._logger.info("Trying to connect to %s", port_id)
@@ -251,6 +303,7 @@ class RobotControlFrame(object):
             tkMessageBox.showerror(title, message)
             return
 
+        self._drawbot.add_event_handler(self.on_drawbot_event)
         self._robot_driver_frame.set_connect_enable(False)
         self._robot_driver_frame.set_disconnect_enable(True)
 
@@ -260,6 +313,7 @@ class RobotControlFrame(object):
         except BaseException as e:
             pass
 
+        self._drawbot.remove_event_handler(self.on_drawbot_event)
         self._robot_driver_frame.set_connect_enable(True)
         self._robot_driver_frame.set_disconnect_enable(False)
 
@@ -269,14 +323,20 @@ class RobotControlFrame(object):
 
     def on_timer(self):
         # Update UI if any params are dirty
-        need_update = False
+        need_plots_update = False
+        need_pos_update = False
 
         with self._data_lock:
             if self._activity_updated:
-                need_update = True
+                need_plots_update = True
                 self._activity_updated = False
 
-        if need_update:
+            if self._pos_updated:
+                need_pos_update = True
+                self._pos_updated = False
+
+        # Update plots
+        if need_plots_update:
             self._logger.info("Activity needs update")
             self._current_activity.update_geometry()
             ax = self._pos_xy_axis
@@ -285,6 +345,10 @@ class RobotControlFrame(object):
             self._current_activity.draw_preview(ax=ax)
             self._drawbot.kine.draw_robot_preview(ax=ax)
             self._update_plot()
+
+        # Update position
+        if need_pos_update:
+            self._robot_driver_frame.set_location(self._x, self._y, self._z)
 
         # Schedule next update
         self._frame.after(self._timer_interval_ms, self.on_timer)

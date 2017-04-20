@@ -88,6 +88,13 @@ class DrawbotDriver(object):
         self._queue = Queue.Queue()
         self._drawing_prog = deque()
 
+        self._event_handlers_lock = threading.Lock()
+        self._event_handlers = set()
+
+        self._x = 0.0
+        self._y = 0.0
+        self._z = 0.0
+
         self._logger = logging.getLogger("drawbot_driver")
 
     @property
@@ -109,6 +116,20 @@ class DrawbotDriver(object):
     @property
     def kine(self):
         return self._drawbot_kine
+
+    def add_event_handler(self, handler):
+        with self._event_handlers_lock:
+            self._event_handlers.add(handler)
+
+    def remove_event_handler(self, handler):
+        with self._event_handlers_lock:
+            if handler in self._event_handlers:
+                self._event_handlers.remove(handler)
+
+    def notify_event(self, event):
+        with self._event_handlers_lock:
+            for handler in self._event_handlers:
+                handler(event)
 
     def connect(self, port_id, **kwargs):
         if self._connected:
@@ -199,6 +220,7 @@ class DrawbotDriver(object):
             # Handle all commands
             if isinstance(cmd, DrawbotDrawPath):
                 path = cmd.path_points
+                points = path
                 is_native = cmd.is_native
 
                 # Convert to natives
@@ -207,7 +229,7 @@ class DrawbotDriver(object):
                     is_native = True
 
                 for idx in xrange(path.shape[0]):
-                    self._drawing_prog.append({"cmd": ("goto_native" if is_native else "goto_point"), "point": path[idx,:]})
+                    self._drawing_prog.append({"cmd": ("goto_native" if is_native else "goto_point"), "point": path[idx,:], "point_xy": points[idx, :]})
             elif isinstance(cmd, DrawbotPenUp):
                 self._drawing_prog.append({"cmd": "pen_up", "height_mm": cmd.height_mm})
             elif isinstance(cmd, DrawbotPenDown):
@@ -216,10 +238,13 @@ class DrawbotDriver(object):
                 is_native = cmd.is_native
 
                 # Convert to natives
+                drawing_cmd = {}
+
                 if not is_native:
                     try:
                         # Find IK
                         natives = self._drawbot_kine.inverse_kine(cmd.position)
+                        drawing_cmd["point_xy"] = cmd.position
                         is_native = True
                     except:
                         self._logger.exception("Could not go ot native!")
@@ -227,8 +252,10 @@ class DrawbotDriver(object):
                 else:
                     natives = cmd.position
 
-                self._drawing_prog.append(
-                    {"cmd": ("goto_native" if is_native else "goto_point"), "point": natives})
+                drawing_cmd["cmd"] = "goto_native" if is_native else "goto_point"
+                drawing_cmd["point"] = natives
+
+                self._drawing_prog.append(drawing_cmd)
             elif isinstance(cmd, DrawbotAbort):
                 # Pen up immediately
                 self.set_pen_height_impl(height_mm=self._default_pen_up_height_mm)
@@ -253,10 +280,17 @@ class DrawbotDriver(object):
         elif drawing_cmd["cmd"] == "goto_native":
             #sself._logger.info("goto_native: %s", drawing_cmd["point"])
             self.set_natives_impl(drawing_cmd["point"])
+            if "point_xy" in drawing_cmd:
+                self._x, self._y = tuple(drawing_cmd["point_xy"])
         elif drawing_cmd["cmd"] in ("pen_up", "pen_down"):
-            self.set_pen_height_impl(height_mm=drawing_cmd["height_mm"])
+            height_mm = drawing_cmd["height_mm"]
+            self._z = height_mm
+            self.set_pen_height_impl(height_mm=height_mm)
         else:
             self._logger.warn("Unknown command: %s", drawing_cmd)
+            return
+
+        self.notify_event({"event": "drawbot_position", "x": self._x, "y": self._y, "z": self._z})
 
     def get_port_list_impl(self):
         raise NotImplementedError()
