@@ -312,7 +312,7 @@ class CheapDrawbot(DrawbotDriver):
         self.maestro = None
         
     def connect_impl(self, port_id):
-        self.maestro = pololu_maestro.PololuMaestro(port_id)
+        self.maestro = pololu_maestro.PololuMaestro(port=port_id)
         self.maestro.connect()
 
     def disconnect_impl(self):

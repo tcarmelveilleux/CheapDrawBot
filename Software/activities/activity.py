@@ -274,3 +274,7 @@ class Activity(object):
     def start_drawing(self):
         # Start drawing on the robot. May not apply for real-time activities
         pass
+
+    def stop_drawing(self):
+        # Stop drawing on the robot. May not apply for real-time activities
+        self._drawbot.abort()

@@ -81,6 +81,7 @@ class DrawbotDriver(object):
         # Hint for delay between point updates
         self._point_delay_sec = kwargs.get("point_delay_ms", 0.01)
         self._pen_diameter_mm = kwargs.get("pen_diameter_mm", 0.25)
+        self._default_pen_up_height_mm = kwargs.get("default_pen_up_height_mm", 3.0)
         self._thread = threading.Thread(target=self._process, name=kwargs.get("thread_name", "drawbot_driver"))
         self._thread.daemon = kwargs.get("daemon", True)
         self._running = False
@@ -112,17 +113,26 @@ class DrawbotDriver(object):
     def connect(self, port_id, **kwargs):
         if self._connected:
             self._logger.warn("Already connected, ignoring!")
-            return
+            return False
+
+        try:
+            self.connect_impl(port_id)
+            self._connected = True
+        except BaseException as e:
+            return False
 
         if not self._thread.is_alive():
             self._running = True
-            self.connect_impl(port_id)
             self._thread.start()
-            
+
+        return True
 
     def disconnect(self):
         if not self._connected:
             pass
+
+        self.disconnect_impl()
+        self._connected = False
 
     def get_port_list(self):
         """
@@ -140,7 +150,8 @@ class DrawbotDriver(object):
         port_list = self.get_port_list_impl()
         return sorted(port_list, key=lambda x: x.get("port_id"))
 
-    def abort_path(self):
+    def abort(self):
+        self._logger.info("Sending abort command!")
         self._queue.put(DrawbotAbort())
 
     def pen_up(self, height_mm=10.0):
@@ -219,12 +230,24 @@ class DrawbotDriver(object):
                 self._drawing_prog.append(
                     {"cmd": ("goto_native" if is_native else "goto_point"), "point": natives})
             elif isinstance(cmd, DrawbotAbort):
-                self._drawing_prog.append({"cmd": "abort"})
+                # Pen up immediately
+                self.set_pen_height_impl(height_mm=self._default_pen_up_height_mm)
+
+                # Drain command queue
+                while not self._queue.empty():
+                    try:
+                        self._queue.get_nowait()
+                    except Queue.Empty:
+                        break
+
+                # Clear drawing program
+                self._drawing_prog.clear()
 
         self._logger.info("Drawbot driver thread exited")
         return
 
     def _execute(self, drawing_cmd):
+        self._logger.info(drawing_cmd)
         if drawing_cmd["cmd"] == "goto_point":
             self._logger.info("goto_point: %s", drawing_cmd["point"])
         elif drawing_cmd["cmd"] == "goto_native":

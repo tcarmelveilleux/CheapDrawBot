@@ -34,6 +34,7 @@ else:
     import tkinter as Tk
     from tkinter import ttk
 
+import tkMessageBox
 import Queue
 #import hmi_driver
 
@@ -56,6 +57,7 @@ class RobotController(object):
 
             print(event)
 
+
 class RobotDriverFrame(object):
     def __init__(self, parent, master, drawbot, **kwargs):
         self._parent = parent
@@ -69,25 +71,61 @@ class RobotDriverFrame(object):
         self._port_label = ttk.Label(master=self._port_frame, text="Port:")
         self._port_label.pack(side=Tk.LEFT)
 
-        ports = drawbot.get_port_list()
-        values = ["%(port_id)s, %(description)s" % port for port in ports]
-        self._port_entry = ttk.Combobox(master=self._port_frame, values=values)
+        self._ports = drawbot.get_port_list()
+        self._values = ["%(port_id)s, %(description)s" % port for port in self._ports]
+        self._port_entry = ttk.Combobox(master=self._port_frame, values=self._values)
         self._port_entry.state(["readonly"])
+        self._port_entry.current(0)
 
         self._port_entry.pack(side=Tk.LEFT)
         self._port_frame.pack(side=Tk.TOP, fill=Tk.X, expand=1)
 
-        self._connect_button = ttk.Button(master=self._frame, text="Connect")
+        # Connection button
+        self._connect_button = ttk.Button(master=self._frame, text="Connect",
+                                          command=self._on_connect)
         self._connect_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
 
-        self._disconnect_button = ttk.Button(master=self._frame, text='Disconnect')
+        self._disconnect_button = ttk.Button(master=self._frame, text="Disconnect",
+                                          command=lambda: self._parent.handle_event({"event": "disconnect"}))
         self._disconnect_button.state(["disabled"])
         self._disconnect_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
 
         # Draw button
-        self._draw_button = ttk.Button(master=self._frame, text="Draw!",
-                                      command=lambda: self._parent.handle_event({"event": "drawbot_go"}))
-        self._draw_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+        self._start_button = ttk.Button(master=self._frame, text="Draw!",
+                                      command=lambda: self._parent.handle_event({"event": "drawbot_start"}))
+        self._start_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+        self._stop_button = ttk.Button(master=self._frame, text="Abort!",
+                                       command=lambda: self._parent.handle_event({"event": "drawbot_stop"}))
+        self._stop_button.state(["disabled"])
+        self._stop_button.pack(side=Tk.TOP, fill=Tk.X, expand=1)
+
+    def _on_connect(self):
+        if len(self._ports) == 0:
+            return
+
+        port_idx = self._port_entry.current()
+        port_id = self._ports[port_idx]["port_id"]
+
+        self._parent.handle_event({"event": "connect", "port_id": port_id})
+
+    def _set_enable(self, control, enabled):
+        if enabled:
+            control.state(["!disabled"])
+        else:
+            control.state(["disabled"])
+
+    def set_connect_enable(self, enabled):
+        self._set_enable(self._connect_button, enabled=enabled)
+
+    def set_disconnect_enable(self, enabled):
+        self._set_enable(self._disconnect_button, enabled=enabled)
+
+    def set_start_enable(self, enabled):
+        self._set_enable(self._start_button, enabled=enabled)
+
+    def set_stop_enable(self, enabled):
+        self._set_enable(self._stop_button, enabled=enabled)
 
     def pack(self, *args, **kwargs):
         self._frame.pack(*args, **kwargs)
@@ -192,8 +230,38 @@ class RobotControlFrame(object):
         with self._data_lock:
             self._activity_updated = True
 
-    def on_drawbot_go(self, event_dict):
+    def on_drawbot_start(self, event_dict):
         self._current_activity.start_drawing()
+        self._robot_driver_frame.set_start_enable(False)
+        self._robot_driver_frame.set_stop_enable(True)
+
+    def on_drawbot_stop(self, event_dict):
+        self._current_activity.stop_drawing()
+        self._robot_driver_frame.set_start_enable(True)
+        self._robot_driver_frame.set_stop_enable(False)
+
+    def on_connect(self, event_dict):
+        port_id = event_dict["port_id"]
+        self._logger.info("Trying to connect to %s", port_id)
+        try:
+            self._drawbot.connect(port_id=port_id)
+        except BaseException as e:
+            message = "Could not connect to port '%s'\nException: %s, %s" % (port_id, e.__class__.__name__, str(e))
+            title = "Connection Error..."
+            tkMessageBox.showerror(title, message)
+            return
+
+        self._robot_driver_frame.set_connect_enable(False)
+        self._robot_driver_frame.set_disconnect_enable(True)
+
+    def on_disconnect(self, event_dict):
+        try:
+            self._drawbot.disconnect()
+        except BaseException as e:
+            pass
+
+        self._robot_driver_frame.set_connect_enable(True)
+        self._robot_driver_frame.set_disconnect_enable(False)
 
     def _update_plot(self):
         self._logger.info("Updating plot")
@@ -245,11 +313,7 @@ class DrawbotApp(object):
         self.frame = ttk.Frame(master)
 
         # TODO: Support multiple robots!
-        drawbot = build_cheap_drawbot(serial_device="COM27")
-        try:
-            drawbot.connect()
-        except:
-            print("Could not connect to robot!")
+        drawbot = build_cheap_drawbot()
 
         activities = []
         spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)

@@ -21,12 +21,7 @@ class PololuMaestro:
         if self.serial_port != None:
             self.close()
 
-        #try:
         self.serial_port = serial.Serial(self.port, self.baud_rate)
-        #except IOError:
-            # TODO: Logging ?
-
-        #    return False
 
         return True
 
