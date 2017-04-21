@@ -12,6 +12,7 @@ import threading
 import Queue
 import logging
 import json
+import time
 import numpy as np
 from collections import deque, namedtuple
 
@@ -21,6 +22,15 @@ class DrawbotDriverException(IOError):
 
 class DrawbotCommand(object):
     pass
+
+
+class DrawbotDelay(DrawbotCommand):
+    def __init__(self, delay_sec):
+        self._delay_sec = delay_sec
+
+    @property
+    def delay_sec(self):
+        return self._delay_sec
 
 
 class DrawbotPenUp(DrawbotCommand):
@@ -175,17 +185,24 @@ class DrawbotDriver(object):
         self._logger.info("Sending abort command!")
         self._queue.put(DrawbotAbort())
 
-    def pen_up(self, height_mm=10.0):
+    def pen_up(self, height_mm=10.0, delay_sec=None):
         self._queue.put(DrawbotPenUp(height_mm=height_mm))
+        if delay_sec is not None:
+            self._queue.put(DrawbotDelay(delay_sec=delay_sec))
 
-    def pen_down(self, height_mm=0.0):
+    def pen_down(self, height_mm=0.0, delay_sec=None):
         self._queue.put(DrawbotPenDown(height_mm=height_mm))
+        if delay_sec is not None:
+            self._queue.put(DrawbotDelay(delay_sec=delay_sec))
 
     def goto(self, position, is_native=False):
         self._queue.put(DrawbotPenGoto(position, is_native=is_native))
 
     def draw_path(self, path_points, is_native=False):
         self._queue.put(DrawbotDrawPath(path_points, is_native=is_native))
+
+    def delay_sec(self, _delay_sec):
+        self._queue.put(DrawbotDelay(_delay_sec))
 
     def shutdown(self, timeout=1.0):
         if self._thread.is_alive():
@@ -234,6 +251,8 @@ class DrawbotDriver(object):
                 self._drawing_prog.append({"cmd": "pen_up", "height_mm": cmd.height_mm})
             elif isinstance(cmd, DrawbotPenDown):
                 self._drawing_prog.append({"cmd": "pen_down", "height_mm": cmd.height_mm})
+            elif isinstance(cmd, DrawbotDelay):
+                self._drawing_prog.append({"cmd": "delay_sec", "delay_sec": cmd.delay_sec})
             elif isinstance(cmd, DrawbotPenGoto):
                 is_native = cmd.is_native
 
@@ -274,7 +293,6 @@ class DrawbotDriver(object):
         return
 
     def _execute(self, drawing_cmd):
-        self._logger.info(drawing_cmd)
         if drawing_cmd["cmd"] == "goto_point":
             self._logger.info("goto_point: %s", drawing_cmd["point"])
         elif drawing_cmd["cmd"] == "goto_native":
@@ -286,6 +304,9 @@ class DrawbotDriver(object):
             height_mm = drawing_cmd["height_mm"]
             self._z = height_mm
             self.set_pen_height_impl(height_mm=height_mm)
+        elif drawing_cmd["cmd"] == "delay_sec":
+            time.sleep(drawing_cmd["delay_sec"])
+            return
         else:
             self._logger.warn("Unknown command: %s", drawing_cmd)
             return

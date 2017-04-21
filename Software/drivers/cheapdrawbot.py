@@ -337,7 +337,6 @@ class CheapDrawbot(DrawbotDriver):
         else:
             self.pen_height_mm = height_mm
             self.maestro.set_target(PEN_UPDOWN_CHAN, int(PEN_DOWN_US * COUNTS_PER_US))
-        time.sleep(0.3)
 
     def set_natives_impl(self, natives):
         theta1 = natives[0]

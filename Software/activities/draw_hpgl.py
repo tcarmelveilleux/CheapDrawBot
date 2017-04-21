@@ -166,11 +166,11 @@ class DrawHpglActivity(Activity):
                 continue
 
             # Move to starting point of current path
-            self._drawbot.pen_up()
+            self._drawbot.pen_up(delay_sec=0.3)
             self._drawbot.goto((path[0, 0], path[0, 1]))
 
             # HACK: When pen is up, add more pen-up delays as goto will cross a large portion of the work area
-            self._drawbot.pen_up()
+            self._drawbot.pen_up(delay_sec=0.3)
 
             # Don't go down if up-point was only point
             if len(path) == 1:
@@ -178,7 +178,7 @@ class DrawHpglActivity(Activity):
                 continue
 
             # Draw entire path
-            self._drawbot.pen_down()
+            self._drawbot.pen_down(delay_sec=0.3)
             self._drawbot.draw_path(path)
 
         # Lift pen at end

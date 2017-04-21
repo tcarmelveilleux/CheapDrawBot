@@ -22,6 +22,7 @@ from matplotlib.backend_bases import key_press_handler
 import matplotlib.pyplot as plt
 from activities.spirograph import SpirographActivity
 from activities.draw_hpgl import DrawHpglActivity
+from activities.manual_control import ManualControlActivity
 from drivers.cheapdrawbot import build_cheap_drawbot
 from version import VERSION
 
@@ -36,8 +37,13 @@ else:
 
 import tkMessageBox
 import Queue
-#import hmi_driver
 
+#TODO: Handle chain of HMI events so that if activity does not handle, the app can (e.g. for start button)
+#TODO: Re-test all activities
+#TODO: Plot manual control path
+#TODO: Add save to manual control
+#TODO: Add timer event to activities
+#TODO: Support joystick join in manual control
 class RobotController(object):
     def __init__(self, **kwargs):
         self.queue = Queue.Queue()
@@ -167,23 +173,11 @@ class RobotDriverFrame(object):
 
 
 class RobotControlFrame(object):
-    def __init__(self, master, drawbot, activities, **kwargs):
+    def __init__(self, master, drawbot, activities, app, **kwargs):
+        self._app = app
         self._drawbot = drawbot
-        self._timer_interval_ms = 100
         self._logger = logging.getLogger("RobotControlFrame")
         self._activities = activities
-        self._current_activity = activities[0]
-
-        self._mode = "spirograph"
-        self._data_lock = threading.Lock()
-
-        self._activity_updated = True
-
-        # Robot endpoint position
-        self._pos_updated = False
-        self._x = 0.0
-        self._y = 0.0
-        self._z = 0.0
 
         #######################
         s = ttk.Style()
@@ -247,8 +241,120 @@ class RobotControlFrame(object):
         ##################
 
         self._frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=2)
+
+    def handle_event(self, event_dict):
+        callback_name = "on_%s" % event_dict["event"]
+        if hasattr(self, callback_name) and callable(getattr(self, callback_name)):
+            getattr(self, callback_name)(event_dict)
+        else:
+            self._app.handle_event(event_dict)
+
+    def on_activity_changed(self, event):
+        notebook = self._oper_notebook
+        activity_idx = notebook.index(notebook.select())
+        self._app.handle_event({"event":"activity_changed", "activity_idx": activity_idx})
+
+    def update_plot(self):
+        self._logger.info("Updating plot")
+        self._canvas.draw()
+
+    def get_param(self, name):
+        return self._params[name]
+
+    def get_canvas(self):
+        return self._canvas
+
+    def get_pos_figure(self):
+        return self._pos_figure
+
+    def get_pos_xy_axis(self):
+        return self._pos_xy_axis
+
+    def get_pos_polar_axis(self):
+        return self._pos_polar_axis
+
+    def on_key_event(self, event):
+        print('you pressed %s' % event.key)
+        key_press_handler(event, self._canvas, self._toolbar)
+
+    def set_location(self, x, y, z):
+        self._robot_driver_frame.set_location(x, y, z)
+
+    def get_tk_frame(self):
+        return self._frame
+
+    def set_connect_enable(self, enabled):
+        self._robot_driver_frame.set_connect_enable(enabled)
+
+    def set_disconnect_enable(self, enabled):
+        self._robot_driver_frame.set_disconnect_enable(enabled)
+
+    def set_start_enable(self, enabled):
+        self._robot_driver_frame.set_start_enable(enabled)
+
+    def set_stop_enable(self, enabled):
+        self._robot_driver_frame.set_stop_enable(enabled)
+
+
+class DrawbotApp(object):
+    def __init__(self, master=None, **kwargs):
+        self.frame = ttk.Frame(master)
+
+        # TODO: Support multiple robots!
+        self._logger = logging.getLogger("DrawbotApp")
+        self._drawbot = build_cheap_drawbot()
+
+        self._activities = []
+
+        spirograph_activity = SpirographActivity(parent=self, drawbot=self._drawbot)
+        self._activities.append(spirograph_activity)
+
+        hpgl_activity = DrawHpglActivity(parent=self, drawbot=self._drawbot)
+        self._activities.append(hpgl_activity)
+
+        manual_control_activity = ManualControlActivity(parent=self, drawbot=self._drawbot)
+        self._activities.append(manual_control_activity)
+
+        self._timer_interval_ms = 100
+        self._current_activity = self._activities[0]
+
+        self._data_lock = threading.Lock()
+        self._activity_lock = threading.Lock()
+
+        self._activity_updated = True
+
+        # Robot endpoint position
+        self._pos_updated = False
+        self._x = 0.0
+        self._y = 0.0
+        self._z = 0.0
+
+        self.robot_control_frame = RobotControlFrame(self.frame, self._drawbot, self._activities, app=self)
+        self.frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+
+        # Init HMI driver if requested
+        self.hmi_driver = None
+        axes_configs = [
+            {"name": "axis0", "centered": False},
+            {"name": "axis1", "centered": False},
+            {"name": "axis2", "centered": False},
+            {"name": "joy_x", "centered": True},
+            {"name": "joy_y", "centered": True},
+            {"name": "button0", "centered": False}]
+
+        if "ghetto_port" in kwargs:
+            from drivers.ghetto_ctrl_driver import GhettoCtrlDriver
+            self.ghetto_driver = GhettoCtrlDriver(kwargs.get("ghetto_port"), self.handle_hmi_event, axes_configs)
+
         # Bootstrap timer update
-        self._frame.after(100, self.on_timer)
+        self.after(100, self.on_timer)
+
+    def after(self, num_ms, handler):
+        self.frame.after(num_ms, handler)
+
+    def handle_hmi_event(self, event):
+        with self._activity_lock:
+            self._current_activity.handle_event({"event": "hmi_event", "data": event})
 
     def handle_event(self, event_dict):
         callback_name = "on_%s" % event_dict["event"]
@@ -258,11 +364,11 @@ class RobotControlFrame(object):
             self._logger.warn("Could not process event: %s", event_dict)
 
     def on_activity_changed(self, event):
-        notebook = self._oper_notebook
-        activity_idx = notebook.index(notebook.select())
-        self._logger.info("%s", repr(activity_idx))
-        self._current_activity = self._activities[activity_idx]
-        self._logger.info("Selected activity %s", self._current_activity.name)
+        activity_idx = event["activity_idx"]
+
+        with self._activity_lock:
+            self._current_activity = self._activities[activity_idx]
+            self._logger.info("Selected activity %s", self._current_activity.name)
 
         # Force refresh of activity
         with self._data_lock:
@@ -273,14 +379,16 @@ class RobotControlFrame(object):
             self._activity_updated = True
 
     def on_drawbot_start(self, event_dict):
-        self._current_activity.start_drawing()
-        self._robot_driver_frame.set_start_enable(False)
-        self._robot_driver_frame.set_stop_enable(True)
+        with self._activity_lock:
+            self._current_activity.start_drawing()
+        self.robot_control_frame.set_start_enable(False)
+        self.robot_control_frame.set_stop_enable(True)
 
     def on_drawbot_stop(self, event_dict):
-        self._current_activity.stop_drawing()
-        self._robot_driver_frame.set_start_enable(True)
-        self._robot_driver_frame.set_stop_enable(False)
+        with self._activity_lock:
+            self._current_activity.stop_drawing()
+        self.robot_control_frame.set_start_enable(True)
+        self.robot_control_frame.set_stop_enable(False)
 
     # Called by drawbot event loop in DrawbotDriver thread context because we are observer.
     # MAKE SURE TO KEEP SHORT-RUNNING
@@ -304,8 +412,9 @@ class RobotControlFrame(object):
             return
 
         self._drawbot.add_event_handler(self.on_drawbot_event)
-        self._robot_driver_frame.set_connect_enable(False)
-        self._robot_driver_frame.set_disconnect_enable(True)
+        with self._activity_lock:
+            self.robot_control_frame.set_connect_enable(False)
+            self.robot_control_frame.set_disconnect_enable(True)
 
     def on_disconnect(self, event_dict):
         try:
@@ -314,12 +423,9 @@ class RobotControlFrame(object):
             pass
 
         self._drawbot.remove_event_handler(self.on_drawbot_event)
-        self._robot_driver_frame.set_connect_enable(True)
-        self._robot_driver_frame.set_disconnect_enable(False)
-
-    def _update_plot(self):
-        self._logger.info("Updating plot")
-        self._canvas.draw()
+        with self._activity_lock:
+            self.robot_control_frame.set_connect_enable(True)
+            self.robot_control_frame.set_disconnect_enable(False)
 
     def on_timer(self):
         # Update UI if any params are dirty
@@ -338,99 +444,25 @@ class RobotControlFrame(object):
         # Update plots
         if need_plots_update:
             self._logger.info("Activity needs update")
-            self._current_activity.update_geometry()
-            ax = self._pos_xy_axis
+            with self._activity_lock:
+                self._current_activity.update_geometry()
+
+            ax = self.robot_control_frame.get_pos_xy_axis()
             ax.clear()
             ax.axis("equal")
-            self._current_activity.draw_preview(ax=ax)
+
+            with self._activity_lock:
+                self._current_activity.draw_preview(ax=ax)
+
             self._drawbot.kine.draw_robot_preview(ax=ax)
-            self._update_plot()
+            self.robot_control_frame.update_plot()
 
         # Update position
         if need_pos_update:
-            self._robot_driver_frame.set_location(self._x, self._y, self._z)
+            self.robot_control_frame.set_location(self._x, self._y, self._z)
 
         # Schedule next update
-        self._frame.after(self._timer_interval_ms, self.on_timer)
-
-    def get_param(self, name):
-        return self._params[name]
-
-    def get_canvas(self):
-        return self._canvas
-
-    def get_pos_figure(self):
-        return self._pos_figure
-
-    def get_pos_polar_axis(self):
-        return self._pos_polar_axis
-
-    def on_key_event(self, event):
-        print('you pressed %s' % event.key)
-        key_press_handler(event, self._canvas, self._toolbar)
-
-    def get_tk_frame(self):
-        return self._frame
-
-class DrawbotApp(object):
-    def __init__(self, master=None, **kwargs):
-        self.frame = ttk.Frame(master)
-
-        # TODO: Support multiple robots!
-        drawbot = build_cheap_drawbot()
-
-        activities = []
-        spirograph_activity = SpirographActivity(parent=self, drawbot=drawbot)
-        activities.append(spirograph_activity)
-        hpgl_activity = DrawHpglActivity(parent=self, drawbot=drawbot)
-        activities.append(hpgl_activity)
-
-        self.robot_control_frame = RobotControlFrame(self.frame, drawbot, activities)
-        self.frame.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
-
-        # Init HMI driver if requested
-        self.hmi_driver = None
-        axes_configs = [
-            {"name": "axis0", "centered": False},
-            {"name": "axis1", "centered": False},
-            {"name": "axis2", "centered": False},
-            {"name": "joy_x", "centered": True},
-            {"name": "joy_y", "centered": True},
-            {"name": "button0", "centered": False}]
-        if "hmi_port" in kwargs:
-            self.hmi_driver = hmi_driver.RobotHMIDriver(kwargs.get("hmi_port"), self.controller.handle_hmi_event, axes_configs)
-
-    def after(self, num_ms, handler):
-        self.frame.after(num_ms, handler)
-
-    def handle_event(self, event_dict):
-        self.robot_control_frame.handle_event(event_dict)
-
-    def _handle_hmi_event_spirograph(self, event):
-        mappings = {"axis0": "l", "axis1": "k", "axis2": "R"}
-
-        axis = event["axis"]
-        if axis not in mappings:
-            return
-        param_name = mappings[axis]
-
-        with self._data_lock:
-            min_val = self._params["spirograph"]["%s_min" % param_name]
-            max_val = self._params["spirograph"]["%s_max" % param_name]
-            old_value = self._params["spirograph"][param_name]
-
-            new_value = min_val + ((float(event["value"]) / 1024.0) * (max_val - min_val))
-
-            if new_value != old_value:
-                print("Updating spirograph variable %s to %.3f" % (param_name, new_value))
-                self._params_dirty = True
-
-            self._params["spirograph"][param_name] = new_value
-
-    def handle_hmi_event(self, event):
-        handler = self._hmi_handlers.get(self._mode)
-        if handler is not None:
-            handler(event)
+        self.after(self._timer_interval_ms, self.on_timer)
 
 def center(toplevel):
     # From Wayner Werner's answer at http://stackoverflow.com/a/3353112
@@ -450,7 +482,7 @@ def _setup_logging():
 def main():
     _setup_logging()
     root = Tk.Tk()
-    app = DrawbotApp(root) #, hmi_port="COM37")
+    app = DrawbotApp(root, ghetto_port="COM37") #, hmi_port="COM37")
     center(root)
     root.title("Drawbot GUI v%s" % VERSION)
     root.mainloop()

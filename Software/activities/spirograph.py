@@ -29,11 +29,14 @@ class SpirographActivity(Activity):
     def handle_event(self, event_dict):
         # If parent handled event, return
         if super(SpirographActivity, self).handle_event(event_dict):
-            return
+            return True
 
         event_type = event_dict["event"]
         if event_type == "param_changed":
             self._parent.handle_event({"event": "activity_updated"})
+            return True
+
+        return False
 
     def update_geometry(self):
         n_turns = self._params["turns"].value
@@ -66,9 +69,9 @@ class SpirographActivity(Activity):
         #ax.axis(extents)
 
     def start_drawing(self):
-        self._drawbot.pen_up()
+        self._drawbot.pen_up(delay_sec=0.3)
         self._drawbot.goto((self._x[0], self._y[0]))
-        self._drawbot.pen_down()
+        self._drawbot.pen_down(delay_sec=0.3)
         drawing_path = np.column_stack((self._x, self._y))
         self._drawbot.draw_path(drawing_path)
-        self._drawbot.pen_up()
+        self._drawbot.pen_up(delay_sec=0.3)
